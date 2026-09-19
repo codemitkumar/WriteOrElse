@@ -1,6 +1,6 @@
 {
   "name": "write-or-else",
-  "version": "1.0.0",
+  "version": "2.8.0",
   "description": "An offline, slightly ruthless writing coach that decides what you write today.",
   "main": "main.js",
   "private": true,
@@ -18,8 +18,18 @@
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "assets/icon.ico",
       "signAndEditExecutable": false
@@ -31,7 +41,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Write or Else",
-      "artifactName": "Write-or-Else-Setup-${version}.${ext}"
+      "artifactName": "Write-or-Else-Setup-${version}.${ext}",
+      "include": "build/installer.nsh"
     },
     "directories": {
       "output": "dist"

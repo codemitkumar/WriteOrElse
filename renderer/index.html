@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html>
+<html data-theme="dark" data-accent="ember">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; img-src 'self' file: data:; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; connect-src 'none'" />
 <title>Write or Else</title>
 <link rel="stylesheet" href="styles.css" />
 </head>
@@ -15,21 +16,44 @@
 
       <div class="streak-pill" id="streakPill">
         <span class="flame">&#128293;</span>
-        <div>
+        <div class="streak-text">
           <div class="streak-num" id="streakNum">0</div>
           <div class="streak-label">day streak</div>
         </div>
+        <div class="streak-best" id="streakBest"></div>
       </div>
 
       <div class="nav-links">
-        <button class="nav-btn active" data-view="dashboard">Dashboard</button>
-        <button class="nav-btn" data-view="books">Books</button>
-        <button class="nav-btn" data-view="history">History</button>
-        <button class="nav-btn" data-view="settings">Settings</button>
+        <button class="nav-btn active" data-view="dashboard">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+          Dashboard
+          <kbd>1</kbd>
+        </button>
+        <button class="nav-btn" data-view="books">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          Books
+          <kbd>2</kbd>
+        </button>
+        <button class="nav-btn" data-view="stats">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+          Stats
+          <kbd>3</kbd>
+        </button>
+        <button class="nav-btn" data-view="history">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+          History
+          <kbd>4</kbd>
+        </button>
+        <button class="nav-btn" data-view="settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
+          <kbd>5</kbd>
+        </button>
       </div>
 
       <div class="sidebar-footer">
-        <button class="btn ghost small" id="logProgressBtnSide">+ Log progress</button>
+        <button class="btn primary small" id="logProgressBtnSide">Log progress <kbd class="on-btn">Ctrl L</kbd></button>
+        <button class="linkish" id="shortcutsBtn">Keyboard shortcuts</button>
       </div>
     </nav>
 
@@ -41,7 +65,10 @@
           <div class="hero-layout">
             <img class="hero-cover hidden" id="targetCoverImg" alt="" />
             <div class="hero-body">
-              <div class="hero-tag">Today's Mission</div>
+              <div class="hero-tag-row">
+                <span class="hero-tag" id="targetTag">Today's Mission</span>
+                <span class="hero-date" id="targetDate"></span>
+              </div>
               <h1 class="hero-title" id="targetTitle">Loading&hellip;</h1>
               <div class="hero-sub" id="targetSub"></div>
               <div class="hero-blurb hidden" id="targetBlurb"></div>
@@ -49,20 +76,53 @@
                 <div class="progress-fill" id="targetProgressFill"></div>
               </div>
               <div class="progress-caption" id="targetProgressCaption"></div>
-              <button class="btn primary" id="logProgressBtnMain">Log progress</button>
+              <div class="quick-add hidden" id="quickAddRow"></div>
+              <div class="hero-actions">
+                <button class="btn primary" id="logProgressBtnMain">Log progress</button>
+                <button class="btn ghost" id="rerollBtn" title="Swap today's target for a different one">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+                  <span id="rerollLabel">Reroll</span>
+                </button>
+                <button class="btn ghost" id="restDayBtn">Rest day</button>
+              </div>
             </div>
+            <div class="hero-ring" id="heroRing"></div>
           </div>
         </div>
 
+        <div class="bonus-card hidden" id="bonusCard">
+          <div class="bonus-head">
+            <span class="bonus-tag" id="bonusTag">Bonus round</span>
+            <span class="bonus-free" id="bonusFree">Optional &mdash; skipping it costs you nothing</span>
+          </div>
+          <div class="bonus-title" id="bonusTitle"></div>
+          <div class="progress-track"><div class="progress-fill" id="bonusProgressFill"></div></div>
+          <div class="progress-caption" id="bonusProgressCaption"></div>
+          <div class="quick-add" id="bonusQuickAdd"></div>
+        </div>
+
+        <div class="metric-row" id="metricRow"></div>
+
         <div class="grid-2">
           <div class="card">
-            <div class="card-title">Books at a glance</div>
-            <div id="statsRow" class="stats-row"></div>
+            <div class="card-title-row">
+              <div class="card-title">Last 14 days</div>
+              <div class="card-note" id="weekDelta"></div>
+            </div>
+            <div id="miniChart" class="mini-chart"></div>
           </div>
           <div class="card">
-            <div class="card-title">Recent activity</div>
+            <div class="card-title-row">
+              <div class="card-title">Recent activity</div>
+              <button class="linkish" data-goto="history">View all</button>
+            </div>
             <div id="recentActivity" class="activity-list"></div>
           </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Books at a glance</div>
+          <div id="statsRow" class="stats-row"></div>
         </div>
       </section>
 
@@ -70,6 +130,19 @@
       <section class="view hidden" id="view-books">
         <div class="section-header">
           <h2>Books</h2>
+          <div class="section-actions">
+            <div class="search-wrap">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <input id="bookSearch" type="search" placeholder="Search books&hellip;" />
+            </div>
+            <select id="bookSort" class="mini-select" title="Sort books">
+              <option value="recent">Recently worked</option>
+              <option value="title">Title A&ndash;Z</option>
+              <option value="words">Most words</option>
+              <option value="created">Newest added</option>
+            </select>
+            <label class="mini-check"><input type="checkbox" id="showPaused" /> Show paused</label>
+          </div>
         </div>
         <div class="add-book-row">
           <input id="newBookTitle" type="text" placeholder="New book title&hellip;" />
@@ -78,18 +151,71 @@
         <div id="bookColumns" class="book-columns"></div>
       </section>
 
+      <!-- STATS -->
+      <section class="view hidden" id="view-stats">
+        <div class="section-header">
+          <h2>Stats</h2>
+        </div>
+        <div class="metric-row" id="statMetrics"></div>
+        <div class="card">
+          <div class="card-title-row">
+            <div class="card-title">Words per day &mdash; last 30 days</div>
+            <div class="card-note" id="chartNote"></div>
+          </div>
+          <div id="wordsChart" class="words-chart"></div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Words by book</div>
+            <div id="bookBars" class="book-bars"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Records</div>
+            <div id="recordsList" class="record-list"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- HISTORY -->
       <section class="view hidden" id="view-history">
         <div class="section-header">
           <h2>History</h2>
         </div>
         <div class="card">
-          <div class="card-title">Last 35 days</div>
-          <div id="heatmap" class="heatmap"></div>
+          <div class="card-title-row">
+            <div class="card-title">Last 10 weeks</div>
+            <div class="heatmap-legend">
+              <span><i class="met"></i> Met</span>
+              <span><i class="missed"></i> Missed</span>
+              <span><i class="rest"></i> Rest</span>
+              <span><i class="inactive"></i> No target</span>
+            </div>
+          </div>
+          <div class="heat-layout">
+            <div class="heatmap-wrap">
+              <div class="heat-months" id="heatMonths"></div>
+              <div class="heat-body">
+                <div class="heat-weekdays" id="heatWeekdays"></div>
+                <div id="heatmap" class="heatmap"></div>
+              </div>
+            </div>
+            <div class="heat-summary" id="heatSummary"></div>
+          </div>
         </div>
         <div class="card">
-          <div class="card-title">Log entries</div>
-          <div id="logList" class="activity-list"></div>
+          <div class="card-title-row">
+            <div class="card-title">Log entries</div>
+            <div class="section-actions">
+              <select id="logFilterBook" class="mini-select"></select>
+              <select id="logFilterType" class="mini-select">
+                <option value="">All types</option>
+                <option value="write">Words written</option>
+                <option value="edit">Chapters edited</option>
+                <option value="plan">Chapter planned</option>
+              </select>
+            </div>
+          </div>
+          <div id="logList" class="activity-list tall"></div>
         </div>
       </section>
 
@@ -97,14 +223,43 @@
       <section class="view hidden" id="view-settings">
         <div class="section-header">
           <h2>Settings</h2>
+          <button class="btn primary" id="saveSettingsBtn">Save settings</button>
         </div>
+
+        <div class="card">
+          <div class="card-title">Appearance</div>
+          <div class="settings-grid">
+            <label>
+              <span>Theme</span>
+              <select id="setTheme">
+                <option value="dark">Dark</option>
+                <option value="midnight">Midnight</option>
+                <option value="light">Light</option>
+              </select>
+            </label>
+            <div class="swatch-field">
+              <span>Accent</span>
+              <div class="swatches" id="accentSwatches">
+                <button class="swatch" data-accent="ember" style="--sw:#ff8a3d" title="Ember"></button>
+                <button class="swatch" data-accent="ocean" style="--sw:#38bdf8" title="Ocean"></button>
+                <button class="swatch" data-accent="violet" style="--sw:#a78bfa" title="Violet"></button>
+                <button class="swatch" data-accent="forest" style="--sw:#4ade80" title="Forest"></button>
+                <button class="swatch" data-accent="rose" style="--sw:#fb7185" title="Rose"></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-title">Punishment</div>
           <div class="settings-grid">
-            <label class="switch-row">
+            <div class="switch-row">
               <span>Enable punishment mode</span>
-              <input type="checkbox" id="setPunishmentEnabled" />
-            </label>
+              <label class="toggle">
+                <input type="checkbox" id="setPunishmentEnabled" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
             <label>
               <span>Start nagging at (24h)</span>
               <input type="number" id="setStartHour" min="0" max="23" />
@@ -121,15 +276,16 @@
               <span>Snoozes before it gets mad</span>
               <input type="number" id="setSnoozeThreshold" min="1" max="20" />
             </label>
-            <label>
+            <label class="span-2">
               <span>Distraction processes (comma separated)</span>
               <input type="text" id="setDistractions" />
             </label>
           </div>
         </div>
+
         <div class="card">
           <div class="card-title">Word target progression</div>
-          <p class="modal-hint" style="margin-bottom:14px;">No random range — the daily word target starts low and climbs on its own every day you hit it, until it plateaus at the cap.</p>
+          <p class="modal-hint">No random range — the daily word target starts low and climbs on its own every day you hit it, until it plateaus at the cap.</p>
           <div class="settings-grid">
             <label>
               <span>Starting words / day</span>
@@ -145,6 +301,7 @@
             </label>
           </div>
         </div>
+
         <div class="card">
           <div class="card-title">Editing targets</div>
           <div class="settings-grid">
@@ -158,9 +315,10 @@
             </label>
           </div>
         </div>
+
         <div class="card">
           <div class="card-title">Planning days</div>
-          <p class="modal-hint" style="margin-bottom:14px;">A book you flag "Needs planning" always gets a plan-the-chapter day with no word count. Books still being written can also get one at random, so you're not always under word pressure.</p>
+          <p class="modal-hint">A book you flag "Needs planning" always gets a plan-the-chapter day with no word count. Books still being written can also get one at random, so you're not always under word pressure.</p>
           <div class="settings-grid">
             <label>
               <span>Chance a writing day becomes a planning day (%)</span>
@@ -168,14 +326,55 @@
             </label>
           </div>
         </div>
+
+        <div class="card">
+          <div class="card-title">Slack</div>
+          <p class="modal-hint">Rest days keep your streak intact. Rerolls let you swap a target you haven't started yet.</p>
+          <div class="settings-grid">
+            <label>
+              <span>Rest days allowed per 7 days</span>
+              <input type="number" id="setRestDaysPerWeek" min="0" max="7" />
+            </label>
+            <label>
+              <span>Rerolls per day</span>
+              <input type="number" id="setRerollsPerDay" min="0" max="10" />
+            </label>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Bonus rounds</div>
+          <p class="modal-hint">Clear the day's real target and you're handed an extra task &mdash; and another every time you finish one, until the day rolls over. They never touch your streak, never raise your word level, and the nagging stays off whether you do them or not.</p>
+          <div class="settings-grid">
+            <div class="switch-row">
+              <span>Keep offering bonus tasks once the day's target is done</span>
+              <label class="toggle">
+                <input type="checkbox" id="setBonusEnabled" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-title">General</div>
-          <label class="switch-row">
+          <div class="switch-row">
             <span>Launch automatically when you log in to Windows</span>
-            <input type="checkbox" id="setAutoLaunch" />
-          </label>
+            <label class="toggle">
+              <input type="checkbox" id="setAutoLaunch" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </div>
-        <button class="btn primary" id="saveSettingsBtn">Save settings</button>
+
+        <div class="card">
+          <div class="card-title">Your data</div>
+          <p class="modal-hint">Everything lives in one JSON file on this machine. Nothing is ever uploaded.</p>
+          <div class="btn-row">
+            <button class="btn ghost" id="exportDataBtn">Export backup&hellip;</button>
+            <button class="btn ghost" id="revealDataBtn">Show data file</button>
+          </div>
+        </div>
       </section>
 
     </main>
@@ -184,7 +383,7 @@
   <!-- LOG PROGRESS MODAL -->
   <div class="modal-backdrop hidden" id="logModalBackdrop">
     <div class="modal">
-      <div class="modal-title">Log progress</div>
+      <div class="modal-title" id="logModalTitle">Log progress</div>
       <label class="modal-label">Book
         <select id="logBookSelect"></select>
       </label>
@@ -195,18 +394,20 @@
           <option value="plan">Chapter planned</option>
         </select>
       </label>
-      <label class="modal-label" id="logAmountRow">Amount
+      <label class="modal-label" id="logAmountRow">
+        <span id="logAmountLabel">Amount</span>
         <input type="number" id="logAmountInput" min="0" />
       </label>
+      <div class="chip-row hidden" id="logPresetRow"></div>
       <label class="modal-label">Note (optional)
-        <input type="text" id="logNoteInput" />
+        <input type="text" id="logNoteInput" placeholder="What happened in it?" />
       </label>
       <label class="modal-label checkbox-row hidden" id="chapterCompleteRow">
         <input type="checkbox" id="chapterCompleteInput" />
         <span>Chapter complete <span class="hint-inline">(if you're under target, the rest gets handed to a new book)</span></span>
       </label>
       <div class="modal-actions">
-        <button class="btn ghost" id="logCancelBtn">Cancel</button>
+        <button class="btn ghost" data-close-modal>Cancel</button>
         <button class="btn primary" id="logSubmitBtn">Save</button>
       </div>
     </div>
@@ -221,30 +422,90 @@
         <input type="number" id="totalChaptersInput" min="1" value="12" />
       </label>
       <div class="modal-actions">
-        <button class="btn ghost" id="chaptersCancelBtn">Cancel</button>
+        <button class="btn ghost" data-close-modal>Cancel</button>
         <button class="btn primary" id="chaptersSubmitBtn">Confirm</button>
       </div>
     </div>
   </div>
 
-  <!-- BOOK DETAILS MODAL (cover + blurb) -->
+  <!-- BOOK DETAILS MODAL -->
   <div class="modal-backdrop hidden" id="detailsModalBackdrop">
-    <div class="modal">
+    <div class="modal wide">
       <div class="modal-title">Book details</div>
       <div class="details-cover-row">
         <img class="details-cover-preview hidden" id="detailsCoverPreview" alt="" />
-        <div class="details-cover-placeholder" id="detailsCoverPlaceholder">No cover</div>
-        <button class="btn ghost small" id="detailsChooseCoverBtn">Choose cover&hellip;</button>
+        <div class="details-cover-placeholder" id="detailsCoverPlaceholder">Drop<br/>cover<br/>here</div>
+        <div class="details-cover-actions">
+          <button class="btn ghost small" id="detailsChooseCoverBtn">Choose cover&hellip;</button>
+          <button class="btn ghost small" id="detailsClearCoverBtn">Remove cover</button>
+        </div>
       </div>
-      <label class="modal-label">Blurb
-        <textarea id="detailsBlurbInput" rows="4" placeholder="A one-paragraph pitch for this book&hellip;"></textarea>
+      <label class="modal-label">Title
+        <input type="text" id="detailsTitleInput" maxlength="160" />
       </label>
+      <label class="modal-label">Blurb
+        <textarea id="detailsBlurbInput" rows="3" placeholder="A one-paragraph pitch for this book&hellip;"></textarea>
+      </label>
+      <label class="modal-label hidden" id="detailsChaptersRow">
+        <span id="detailsChaptersLabel">Chapters</span>
+        <input type="number" id="detailsChaptersInput" min="0" />
+      </label>
+      <div class="modal-grid">
+        <label class="modal-label hidden" id="detailsWordsRow">
+          <span id="detailsWordsLabel">Words written so far</span>
+          <input type="number" id="detailsWordsInput" min="0" placeholder="e.g. 32000" />
+        </label>
+        <label class="modal-label">
+          <span>Word goal <span class="hint-inline">(optional)</span></span>
+          <input type="number" id="detailsTargetWordsInput" min="0" placeholder="e.g. 80000" />
+        </label>
+      </div>
+      <div class="details-progress hidden" id="detailsProgressRow">
+        <div class="details-progress-head">
+          <span id="detailsProgressLabel">Progress</span>
+          <span id="detailsProgressPct">0%</span>
+        </div>
+        <div class="card-progress"><i id="detailsProgressFill" style="width:0%"></i></div>
+      </div>
       <div class="modal-actions">
-        <button class="btn ghost" id="detailsCancelBtn">Close</button>
+        <button class="btn ghost" data-close-modal>Close</button>
         <button class="btn primary" id="detailsSaveBtn">Save</button>
       </div>
     </div>
   </div>
+
+  <!-- CONFIRM MODAL -->
+  <div class="modal-backdrop hidden" id="confirmModalBackdrop">
+    <div class="modal narrow">
+      <div class="modal-title" id="confirmTitle">Are you sure?</div>
+      <p class="modal-hint" id="confirmBody"></p>
+      <div class="modal-actions">
+        <button class="btn ghost" id="confirmCancelBtn">Cancel</button>
+        <button class="btn danger" id="confirmOkBtn">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SHORTCUTS MODAL -->
+  <div class="modal-backdrop hidden" id="shortcutsModalBackdrop">
+    <div class="modal">
+      <div class="modal-title">Keyboard shortcuts</div>
+      <div class="shortcut-list">
+        <div><span>Log progress</span><kbd>Ctrl</kbd><kbd>L</kbd></div>
+        <div><span>New book</span><kbd>Ctrl</kbd><kbd>N</kbd></div>
+        <div><span>Reroll today's target</span><kbd>Ctrl</kbd><kbd>R</kbd></div>
+        <div><span>Switch views</span><kbd>1</kbd>&ndash;<kbd>5</kbd></div>
+        <div><span>Close a dialog</span><kbd>Esc</kbd></div>
+        <div><span>Save a dialog</span><kbd>Ctrl</kbd><kbd>Enter</kbd></div>
+        <div><span>Open from anywhere</span><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>W</kbd></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn primary" data-close-modal>Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toastStack"></div>
 
   <script src="app.js"></script>
 </body>

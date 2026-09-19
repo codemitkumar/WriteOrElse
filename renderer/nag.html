@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <style>
+  :root { --accent: #ff8a3d; --accent-2: #ff6b35; --ink: #14161a; }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; height: 100%; overflow: hidden;
@@ -16,37 +17,32 @@
     border: 1px solid #2a2f3a;
     display: flex; flex-direction: column; justify-content: center;
     padding: 20px 22px;
-    height: 100%;
   }
   body.escalated {
     background: radial-gradient(circle at 50% 30%, #3a0d0d 0%, #14060a 70%);
     color: #fff;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     text-align: center;
-    height: 100%;
     padding: 40px;
   }
   .tag {
     font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
-    color: #ff8a3d; font-weight: 600; margin-bottom: 6px;
+    color: var(--accent); font-weight: 700; margin-bottom: 6px;
   }
   .escalated .tag { color: #ff5252; font-size: 13px; }
-  h1 {
-    font-size: 16px; margin: 0 0 8px 0; font-weight: 600; line-height: 1.35;
-  }
+  h1 { font-size: 16px; margin: 0 0 8px 0; font-weight: 600; line-height: 1.35; }
   .escalated h1 { font-size: 30px; margin-bottom: 14px; }
-  p.desc {
-    font-size: 13px; color: #b9c0cc; margin: 0 0 16px 0; line-height: 1.4;
-  }
+  p.desc { font-size: 13px; color: #b9c0cc; margin: 0 0 16px 0; line-height: 1.4; }
   .escalated p.desc { font-size: 17px; color: #ffd3d3; margin-bottom: 26px; }
   .row { display: flex; gap: 10px; }
   button {
-    font-family: inherit; font-size: 13px; font-weight: 600;
+    font-family: inherit; font-size: 13px; font-weight: 700;
     border-radius: 8px; border: none; padding: 10px 16px; cursor: pointer;
-    transition: transform .08s ease, opacity .15s ease;
+    transition: transform .08s ease, filter .15s ease;
   }
   button:active { transform: scale(0.96); }
-  .primary { background: linear-gradient(135deg, #ff8a3d, #ff6b35); color: #14161a; flex: 1; }
+  button:hover { filter: brightness(1.08); }
+  .primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--ink); flex: 1; }
   .ghost { background: #262b35; color: #cfd4dc; }
   .escalated .primary { padding: 14px 28px; font-size: 15px; }
   .escalated .ghost { background: rgba(255,255,255,0.08); color: #ffb3b3; padding: 14px 22px; font-size: 14px; }
@@ -55,30 +51,50 @@
 </head>
 <body>
 <script>
+  const ACCENTS = {
+    ember:  ['#ff8a3d', '#ff6b35', '#1a1208'],
+    ocean:  ['#38bdf8', '#2563eb', '#04131f'],
+    violet: ['#a78bfa', '#7c3aed', '#130b23'],
+    forest: ['#4ade80', '#16a34a', '#05170c'],
+    rose:   ['#fb7185', '#e11d48', '#1e0710']
+  };
+
   const params = new URLSearchParams(location.search);
-  const desc = params.get('desc') || 'log today\'s progress';
+  const desc = params.get('desc') || "log today's progress";
   const escalated = params.get('escalated') === '1';
+  const [accent, accent2, ink] = ACCENTS[params.get('accent')] || ACCENTS.ember;
+  document.documentElement.style.setProperty('--accent', accent);
+  document.documentElement.style.setProperty('--accent-2', accent2);
+  document.documentElement.style.setProperty('--ink', ink);
+
   document.body.className = escalated ? 'escalated' : 'normal';
-  document.body.innerHTML = escalated ? `
-    <div class="flame">&#128293;</div>
-    <div class="tag">You've been warned five times</div>
-    <h1>Still haven't written a word today.</h1>
-    <p class="desc">${desc}</p>
-    <div class="row">
-      <button class="primary" id="logNow">Fine. Let me log it.</button>
-      <button class="ghost" id="snooze">5 more minutes</button>
-    </div>
-  ` : `
-    <div class="tag">Write or Else</div>
-    <h1>Today's target is still open.</h1>
-    <p class="desc">${desc}</p>
-    <div class="row">
-      <button class="primary" id="logNow">Log progress</button>
-      <button class="ghost" id="snooze">I'm doing it</button>
-    </div>
-  `;
-  document.getElementById('logNow').onclick = () => window.nag.logNow();
-  document.getElementById('snooze').onclick = () => window.nag.snooze();
+
+  function add(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    // textContent, not innerHTML — `desc` carries a user-supplied book title.
+    if (text != null) node.textContent = text;
+    document.body.appendChild(node);
+    return node;
+  }
+
+  if (escalated) add('div', 'flame', '\u{1F525}');
+  add('div', 'tag', escalated ? "You've been warned five times" : 'Write or Else');
+  add('h1', null, escalated ? "Still haven't written a word today." : "Today's target is still open.");
+  add('p', 'desc', desc);
+
+  const row = add('div', 'row');
+  const primary = document.createElement('button');
+  primary.className = 'primary';
+  primary.textContent = escalated ? 'Fine. Let me log it.' : 'Log progress';
+  primary.onclick = () => window.nag.logNow();
+
+  const ghost = document.createElement('button');
+  ghost.className = 'ghost';
+  ghost.textContent = escalated ? '5 more minutes' : "I'm doing it";
+  ghost.onclick = () => window.nag.snooze();
+
+  row.append(primary, ghost);
 </script>
 </body>
 </html>

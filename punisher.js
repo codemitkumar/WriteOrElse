@@ -32,7 +32,7 @@ function closeShame() {
 }
 
 function describeTarget(target, bookTitle) {
-  if (target.type === 'write') return `Write ${target.amount} words of "${bookTitle}"`;
+  if (target.type === 'write') return `Write ${target.amount.toLocaleString()} words of "${bookTitle}"`;
   if (target.type === 'plan') return `Plan your next chapter of "${bookTitle}"`;
   return `Edit ${target.amount} chapter(s) of "${bookTitle}"`;
 }
@@ -60,7 +60,7 @@ function showNag(store, onFocusMain) {
   });
   nagWin.setAlwaysOnTop(true, 'screen-saver');
   nagWin.loadFile(path.join(__dirname, 'renderer', 'nag.html'), {
-    query: { desc, escalated: '0' }
+    query: { desc, escalated: '0', accent: store.data.settings.accent || 'ember' }
   });
   nagWin.once('ready-to-show', () => nagWin && nagWin.show());
 
@@ -105,7 +105,7 @@ function showShame(store, onFocusMain) {
     });
     shameWin.setAlwaysOnTop(true, 'screen-saver');
     shameWin.loadFile(path.join(__dirname, 'renderer', 'nag.html'), {
-      query: { desc, escalated: '1' }
+      query: { desc, escalated: '1', accent: settings.accent || 'ember' }
     });
     shameWin.once('ready-to-show', () => shameWin && shameWin.show());
 
