@@ -3,17 +3,32 @@
 An offline desktop app that decides what you write today, tracks it, and gets
 progressively more annoying if you ignore it.
 
-## Running the packaged app
+## Installing
 
-After a build, grab the portable exe from `dist\Write or Else 1.0.0.exe` and
-run it directly — no installer, no internet connection needed. It starts
-minimized to the system tray and (by default) launches automatically when you
-log into Windows, so streak/punishment tracking works without you having to
-remember to open it.
+Run `dist\Write-or-Else-Setup-<version>.exe` and step through the wizard. It
+installs to `%LOCALAPPDATA%\Programs\Write or Else\` (a per-user install, no
+admin rights needed), adds Start Menu and Desktop shortcuts, and registers a
+normal Windows uninstaller (Settings → Apps, or
+`%LOCALAPPDATA%\Programs\Write or Else\Uninstall Write or Else.exe`).
+
+This install is completely independent of this source folder — everything
+the app needs is bundled into the installed copy, so **this whole project
+directory can be deleted after installing** without breaking anything. Keep
+it around only if you plan to rebuild or modify the app later.
+
+If you'd rather not install anything, `dist\Write or Else 1.0.0.exe` is a
+portable single-file build — just make sure to move it *out* of this project
+folder before deleting the folder, since that copy isn't decoupled the way
+the installed version is.
+
+Either way it's fully offline, starts minimized to the system tray, and (by
+default) launches automatically when you log into Windows, so
+streak/punishment tracking works without you having to remember to open it.
 
 All your data lives locally in
 `%APPDATA%\write-or-else\write-or-else-data.json` — nothing leaves your
-machine.
+machine, and it survives reinstalls/updates since it's stored outside the
+install directory.
 
 ## How it works
 
@@ -46,7 +61,7 @@ which processes get killed, etc.) are editable in the Settings tab.
 ```bash
 npm install
 npm start        # run in dev mode
-npm run dist      # build dist\Write or Else <version>.exe (portable)
+npm run dist      # build dist\Write-or-Else-Setup-<version>.exe (installer) + the portable exe
 ```
 
 Icons are generated with `node scripts/make-icon.js` (pure Node, no image
