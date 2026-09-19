@@ -1,0 +1,44 @@
+{
+  "name": "write-or-else",
+  "version": "1.0.0",
+  "description": "An offline, slightly ruthless writing coach that decides what you write today.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.sanjay.writeorelse",
+    "productName": "Write or Else",
+    "asar": true,
+    "files": [
+      "**/*",
+      "!dist/**"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Write or Else",
+      "artifactName": "Write-or-Else-Setup-${version}.${ext}"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}

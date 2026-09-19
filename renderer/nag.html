@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    -webkit-app-region: no-drag;
+    user-select: none;
+  }
+  body.normal {
+    background: #171a21;
+    color: #eef1f5;
+    border: 1px solid #2a2f3a;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 20px 22px;
+    height: 100%;
+  }
+  body.escalated {
+    background: radial-gradient(circle at 50% 30%, #3a0d0d 0%, #14060a 70%);
+    color: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center;
+    height: 100%;
+    padding: 40px;
+  }
+  .tag {
+    font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: #ff8a3d; font-weight: 600; margin-bottom: 6px;
+  }
+  .escalated .tag { color: #ff5252; font-size: 13px; }
+  h1 {
+    font-size: 16px; margin: 0 0 8px 0; font-weight: 600; line-height: 1.35;
+  }
+  .escalated h1 { font-size: 30px; margin-bottom: 14px; }
+  p.desc {
+    font-size: 13px; color: #b9c0cc; margin: 0 0 16px 0; line-height: 1.4;
+  }
+  .escalated p.desc { font-size: 17px; color: #ffd3d3; margin-bottom: 26px; }
+  .row { display: flex; gap: 10px; }
+  button {
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    border-radius: 8px; border: none; padding: 10px 16px; cursor: pointer;
+    transition: transform .08s ease, opacity .15s ease;
+  }
+  button:active { transform: scale(0.96); }
+  .primary { background: linear-gradient(135deg, #ff8a3d, #ff6b35); color: #14161a; flex: 1; }
+  .ghost { background: #262b35; color: #cfd4dc; }
+  .escalated .primary { padding: 14px 28px; font-size: 15px; }
+  .escalated .ghost { background: rgba(255,255,255,0.08); color: #ffb3b3; padding: 14px 22px; font-size: 14px; }
+  .flame { font-size: 22px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<script>
+  const params = new URLSearchParams(location.search);
+  const desc = params.get('desc') || 'log today\'s progress';
+  const escalated = params.get('escalated') === '1';
+  document.body.className = escalated ? 'escalated' : 'normal';
+  document.body.innerHTML = escalated ? `
+    <div class="flame">&#128293;</div>
+    <div class="tag">You've been warned five times</div>
+    <h1>Still haven't written a word today.</h1>
+    <p class="desc">${desc}</p>
+    <div class="row">
+      <button class="primary" id="logNow">Fine. Let me log it.</button>
+      <button class="ghost" id="snooze">5 more minutes</button>
+    </div>
+  ` : `
+    <div class="tag">Write or Else</div>
+    <h1>Today's target is still open.</h1>
+    <p class="desc">${desc}</p>
+    <div class="row">
+      <button class="primary" id="logNow">Log progress</button>
+      <button class="ghost" id="snooze">I'm doing it</button>
+    </div>
+  `;
+  document.getElementById('logNow').onclick = () => window.nag.logNow();
+  document.getElementById('snooze').onclick = () => window.nag.snooze();
+</script>
+</body>
+</html>

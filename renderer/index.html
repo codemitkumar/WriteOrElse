@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Write or Else</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <nav class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">W</div>
+        <div class="brand-name">Write or Else</div>
+      </div>
+
+      <div class="streak-pill" id="streakPill">
+        <span class="flame">&#128293;</span>
+        <div>
+          <div class="streak-num" id="streakNum">0</div>
+          <div class="streak-label">day streak</div>
+        </div>
+      </div>
+
+      <div class="nav-links">
+        <button class="nav-btn active" data-view="dashboard">Dashboard</button>
+        <button class="nav-btn" data-view="books">Books</button>
+        <button class="nav-btn" data-view="history">History</button>
+        <button class="nav-btn" data-view="settings">Settings</button>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="btn ghost small" id="logProgressBtnSide">+ Log progress</button>
+      </div>
+    </nav>
+
+    <main class="content">
+
+      <!-- DASHBOARD -->
+      <section class="view" id="view-dashboard">
+        <div class="hero-card" id="targetCard">
+          <div class="hero-layout">
+            <img class="hero-cover hidden" id="targetCoverImg" alt="" />
+            <div class="hero-body">
+              <div class="hero-tag">Today's Mission</div>
+              <h1 class="hero-title" id="targetTitle">Loading&hellip;</h1>
+              <div class="hero-sub" id="targetSub"></div>
+              <div class="hero-blurb hidden" id="targetBlurb"></div>
+              <div class="progress-track">
+                <div class="progress-fill" id="targetProgressFill"></div>
+              </div>
+              <div class="progress-caption" id="targetProgressCaption"></div>
+              <button class="btn primary" id="logProgressBtnMain">Log progress</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Books at a glance</div>
+            <div id="statsRow" class="stats-row"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Recent activity</div>
+            <div id="recentActivity" class="activity-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- BOOKS -->
+      <section class="view hidden" id="view-books">
+        <div class="section-header">
+          <h2>Books</h2>
+        </div>
+        <div class="add-book-row">
+          <input id="newBookTitle" type="text" placeholder="New book title&hellip;" />
+          <button class="btn primary" id="addBookBtn">Add book</button>
+        </div>
+        <div id="bookColumns" class="book-columns"></div>
+      </section>
+
+      <!-- HISTORY -->
+      <section class="view hidden" id="view-history">
+        <div class="section-header">
+          <h2>History</h2>
+        </div>
+        <div class="card">
+          <div class="card-title">Last 35 days</div>
+          <div id="heatmap" class="heatmap"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Log entries</div>
+          <div id="logList" class="activity-list"></div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="view hidden" id="view-settings">
+        <div class="section-header">
+          <h2>Settings</h2>
+        </div>
+        <div class="card">
+          <div class="card-title">Punishment</div>
+          <div class="settings-grid">
+            <label class="switch-row">
+              <span>Enable punishment mode</span>
+              <input type="checkbox" id="setPunishmentEnabled" />
+            </label>
+            <label>
+              <span>Start nagging at (24h)</span>
+              <input type="number" id="setStartHour" min="0" max="23" />
+            </label>
+            <label>
+              <span>Stop nagging at (24h)</span>
+              <input type="number" id="setEndHour" min="1" max="24" />
+            </label>
+            <label>
+              <span>Check every (minutes)</span>
+              <input type="number" id="setInterval" min="5" max="180" />
+            </label>
+            <label>
+              <span>Snoozes before it gets mad</span>
+              <input type="number" id="setSnoozeThreshold" min="1" max="20" />
+            </label>
+            <label>
+              <span>Distraction processes (comma separated)</span>
+              <input type="text" id="setDistractions" />
+            </label>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Word target progression</div>
+          <p class="modal-hint" style="margin-bottom:14px;">No random range — the daily word target starts low and climbs on its own every day you hit it, until it plateaus at the cap.</p>
+          <div class="settings-grid">
+            <label>
+              <span>Starting words / day</span>
+              <input type="number" id="setStartWords" min="0" />
+            </label>
+            <label>
+              <span>Increase per successful day</span>
+              <input type="number" id="setWordIncrement" min="0" />
+            </label>
+            <label>
+              <span>Cap (max words / day)</span>
+              <input type="number" id="setWordCap" min="0" />
+            </label>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Editing targets</div>
+          <div class="settings-grid">
+            <label>
+              <span>Min chapters to edit</span>
+              <input type="number" id="setMinChapters" min="1" />
+            </label>
+            <label>
+              <span>Max chapters to edit</span>
+              <input type="number" id="setMaxChapters" min="1" />
+            </label>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Planning days</div>
+          <p class="modal-hint" style="margin-bottom:14px;">A book you flag "Needs planning" always gets a plan-the-chapter day with no word count. Books still being written can also get one at random, so you're not always under word pressure.</p>
+          <div class="settings-grid">
+            <label>
+              <span>Chance a writing day becomes a planning day (%)</span>
+              <input type="number" id="setPlanningProbability" min="0" max="100" />
+            </label>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">General</div>
+          <label class="switch-row">
+            <span>Launch automatically when you log in to Windows</span>
+            <input type="checkbox" id="setAutoLaunch" />
+          </label>
+        </div>
+        <button class="btn primary" id="saveSettingsBtn">Save settings</button>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- LOG PROGRESS MODAL -->
+  <div class="modal-backdrop hidden" id="logModalBackdrop">
+    <div class="modal">
+      <div class="modal-title">Log progress</div>
+      <label class="modal-label">Book
+        <select id="logBookSelect"></select>
+      </label>
+      <label class="modal-label">Type
+        <select id="logTypeSelect">
+          <option value="write">Words written</option>
+          <option value="edit">Chapters edited</option>
+          <option value="plan">Chapter planned</option>
+        </select>
+      </label>
+      <label class="modal-label" id="logAmountRow">Amount
+        <input type="number" id="logAmountInput" min="0" />
+      </label>
+      <label class="modal-label">Note (optional)
+        <input type="text" id="logNoteInput" />
+      </label>
+      <label class="modal-label checkbox-row hidden" id="chapterCompleteRow">
+        <input type="checkbox" id="chapterCompleteInput" />
+        <span>Chapter complete <span class="hint-inline">(if you're under target, the rest gets handed to a new book)</span></span>
+      </label>
+      <div class="modal-actions">
+        <button class="btn ghost" id="logCancelBtn">Cancel</button>
+        <button class="btn primary" id="logSubmitBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MARK COMPLETED MODAL -->
+  <div class="modal-backdrop hidden" id="chaptersModalBackdrop">
+    <div class="modal">
+      <div class="modal-title">How many chapters total?</div>
+      <p class="modal-hint">This book will move to Completed, then you can start editing it whenever you're ready.</p>
+      <label class="modal-label">Total chapters
+        <input type="number" id="totalChaptersInput" min="1" value="12" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn ghost" id="chaptersCancelBtn">Cancel</button>
+        <button class="btn primary" id="chaptersSubmitBtn">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOOK DETAILS MODAL (cover + blurb) -->
+  <div class="modal-backdrop hidden" id="detailsModalBackdrop">
+    <div class="modal">
+      <div class="modal-title">Book details</div>
+      <div class="details-cover-row">
+        <img class="details-cover-preview hidden" id="detailsCoverPreview" alt="" />
+        <div class="details-cover-placeholder" id="detailsCoverPlaceholder">No cover</div>
+        <button class="btn ghost small" id="detailsChooseCoverBtn">Choose cover&hellip;</button>
+      </div>
+      <label class="modal-label">Blurb
+        <textarea id="detailsBlurbInput" rows="4" placeholder="A one-paragraph pitch for this book&hellip;"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button class="btn ghost" id="detailsCancelBtn">Close</button>
+        <button class="btn primary" id="detailsSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
