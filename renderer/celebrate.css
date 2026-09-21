@@ -1,0 +1,434 @@
+/* ============================================================
+   Celebrations & motion
+   Loaded after styles.css, so it can lift existing components
+   without editing them. Paired with celebrate.js.
+
+   House easing, kept consistent with the rest of the app:
+     settle   cubic-bezier(.22,.9,.35,1)    — arrives and stops
+     overshoot cubic-bezier(.22,1.4,.35,1)  — arrives and bounces
+   ============================================================ */
+
+/* ---------- Effect layers ---------- */
+/* Both sit above the modals (z 70-80) — a target cleared from inside the log
+   dialog should still be celebrated over the top of it. */
+.fx-layer {
+  position: fixed; inset: 0; z-index: 300;
+  pointer-events: none; overflow: hidden;
+}
+.fx-banner-layer {
+  position: fixed; inset: 0; z-index: 310;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 14vh;
+  pointer-events: none;
+}
+
+/* ---------- Confetti ---------- */
+/* Positioned at the layer origin and moved purely by transform, so the physics
+   loop in celebrate.js never touches layout. */
+.fx-p {
+  position: absolute; left: 0; top: 0;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+.fx-p.sq { border-radius: 2px; }
+.fx-p.bar { border-radius: 1px; }
+.fx-p.dot { border-radius: 50%; }
+.fx-p.tri { clip-path: polygon(50% 0%, 100% 100%, 0% 100%); border-radius: 0; }
+
+/* ---------- Sparks ---------- */
+.fx-spark {
+  position: absolute; width: 5px; height: 5px; border-radius: 50%;
+  margin: -2.5px 0 0 -2.5px;
+  animation: fxSpark .62s cubic-bezier(.22,.9,.35,1) forwards;
+  will-change: transform, opacity;
+}
+@keyframes fxSpark {
+  0% { transform: translate(0,0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
+}
+
+/* ---------- Screen flash ---------- */
+/* A wash from the edges rather than a white-out — it reads as a glow coming up
+   under the page instead of a camera flash in your face at 11pm. */
+.fx-flash {
+  position: absolute; inset: 0;
+  background: radial-gradient(120% 80% at 50% 110%, rgba(var(--accent-rgb),0.30), transparent 60%);
+  animation: fxFlash .95s ease-out forwards;
+}
+.fx-flash.green { background: radial-gradient(120% 80% at 50% 110%, rgba(34,197,94,0.30), transparent 60%); }
+.fx-flash.gold { background: radial-gradient(120% 80% at 50% 110%, rgba(245,158,11,0.32), transparent 60%); }
+.fx-flash.violet { background: radial-gradient(120% 80% at 50% 110%, rgba(139,92,246,0.30), transparent 60%); }
+@keyframes fxFlash {
+  0% { opacity: 0; }
+  18% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---------- Shockwave ---------- */
+.fx-wave {
+  position: absolute; border-radius: 50%;
+  border: 2px solid rgba(var(--accent-rgb),0.55);
+  animation: fxWave .78s cubic-bezier(.22,.9,.35,1) forwards;
+  will-change: transform, opacity;
+}
+.fx-wave.green { border-color: rgba(34,197,94,0.6); }
+.fx-wave.gold { border-color: rgba(245,158,11,0.6); }
+.fx-wave.violet { border-color: rgba(139,92,246,0.6); }
+@keyframes fxWave {
+  0% { transform: scale(.25); opacity: .85; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+/* ---------- Stamp ---------- */
+/* Bottom-right, not top-right: the hero card's progress ring is top-aligned and
+   owns the top 104px of that corner, and the tag row owns the rest of it. The
+   bottom-right is clear — the action buttons stop well short of it. */
+.fx-stamp {
+  position: absolute; bottom: 14px; right: 16px; z-index: 3;
+  padding: 6px 13px; border-radius: 8px;
+  font-size: 12.5px; font-weight: 900; letter-spacing: 2.4px; text-transform: uppercase;
+  color: var(--accent); border: 2px solid var(--accent);
+  background: rgba(var(--accent-rgb),0.10);
+  pointer-events: none; white-space: nowrap;
+  /* Scale from the corner it's pinned to, so the oversized first frame of the
+     slam grows inward instead of off the card edge — .hero-card clips its
+     overflow and would shear the stamp in half on the way down. */
+  transform-origin: 100% 100%;
+  animation: fxStamp .5s cubic-bezier(.2,1.5,.4,1) backwards;
+  transition: opacity .3s ease, transform .3s ease;
+}
+.fx-stamp.green { color: var(--green); border-color: var(--green); background: rgba(34,197,94,0.10); }
+.fx-stamp.gold { color: var(--amber); border-color: var(--amber); background: rgba(245,158,11,0.10); }
+.fx-stamp.violet { color: var(--violet); border-color: var(--violet); background: rgba(139,92,246,0.10); }
+.fx-stamp.leaving { opacity: 0; transform: rotate(var(--tilt)) scale(1.08); }
+@keyframes fxStamp {
+  0% { opacity: 0; transform: rotate(var(--tilt)) scale(2.2); }
+  60% { opacity: 1; transform: rotate(var(--tilt)) scale(.92); }
+  100% { opacity: 1; transform: rotate(var(--tilt)) scale(1); }
+}
+
+/* ---------- Banner ---------- */
+.fx-banner {
+  pointer-events: auto; cursor: pointer;
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: 15px;
+  max-width: min(460px, 86vw);
+  padding: 17px 24px 17px 20px;
+  border-radius: 16px;
+  background: var(--bg-elev);
+  border: 1px solid rgba(var(--accent-rgb),0.45);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb),0.12), var(--shadow-lift),
+              0 0 46px rgba(var(--accent-rgb),0.22);
+  animation: fxBannerIn .5s cubic-bezier(.18,1.3,.32,1) backwards;
+  transition: opacity .3s ease, transform .3s ease;
+}
+.fx-banner.leaving { opacity: 0; transform: translateY(-14px) scale(.96); }
+.fx-banner.green { border-color: rgba(34,197,94,0.5); box-shadow: 0 0 0 1px rgba(34,197,94,0.14), var(--shadow-lift), 0 0 46px rgba(34,197,94,0.22); }
+.fx-banner.gold { border-color: rgba(245,158,11,0.5); box-shadow: 0 0 0 1px rgba(245,158,11,0.14), var(--shadow-lift), 0 0 46px rgba(245,158,11,0.24); }
+.fx-banner.violet { border-color: rgba(139,92,246,0.5); box-shadow: 0 0 0 1px rgba(139,92,246,0.14), var(--shadow-lift), 0 0 46px rgba(139,92,246,0.22); }
+
+/* A slow sheen crossing the card, so it never looks like a static dialog. */
+.fx-banner-glow {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 20%, rgba(255,255,255,0.13) 46%, transparent 68%);
+  transform: translateX(-120%);
+  animation: fxSheen 1.5s .22s cubic-bezier(.3,.7,.4,1) 2;
+}
+@keyframes fxSheen { to { transform: translateX(120%); } }
+
+.fx-banner-icon {
+  font-size: 30px; line-height: 1; flex-shrink: 0;
+  animation: fxIconPop .7s .1s cubic-bezier(.2,1.6,.4,1) backwards;
+}
+.fx-banner-text { min-width: 0; }
+.fx-banner-title {
+  font-size: 17px; font-weight: 800; letter-spacing: -0.2px; line-height: 1.25;
+}
+.fx-banner-sub {
+  margin-top: 3px; font-size: 12.5px; color: var(--text-dim); line-height: 1.4;
+}
+@keyframes fxBannerIn {
+  0% { opacity: 0; transform: translateY(-26px) scale(.9); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fxIconPop {
+  0% { opacity: 0; transform: scale(0) rotate(-40deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+/* ---------- One-shot pops on changed numbers ---------- */
+.fx-pop { animation: fxPop .44s cubic-bezier(.22,1.5,.35,1); }
+@keyframes fxPop {
+  0% { transform: scale(1); }
+  38% { transform: scale(1.22); }
+  100% { transform: scale(1); }
+}
+.fx-nudge { animation: fxNudge .5s cubic-bezier(.22,.9,.35,1); }
+@keyframes fxNudge {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-5px); }
+}
+
+/* ---------- Progress bars ---------- */
+/* A shine that runs the length of the bar whenever it grows, so an increment
+   you can barely see in the width is still legible as progress. */
+.progress-track { position: relative; }
+.progress-fill { position: relative; overflow: hidden; }
+.progress-fill.fx-grew::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 10%, rgba(255,255,255,0.55) 50%, transparent 90%);
+  animation: fxBarShine .75s cubic-bezier(.3,.7,.4,1);
+}
+@keyframes fxBarShine {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+/* Completion gets one bright flare. It overrides the steady .complete shimmer
+   for its 0.7s (this sheet loads second, so it wins) and hands back to it when
+   the class comes off on animationend. */
+.progress-fill.fx-done { animation: fxBarDone .7s cubic-bezier(.22,.9,.35,1); }
+@keyframes fxBarDone {
+  0% { filter: brightness(1); box-shadow: none; }
+  35% { filter: brightness(1.75); box-shadow: 0 0 16px rgba(34,197,94,0.75); }
+  100% { filter: brightness(1); box-shadow: none; }
+}
+
+/* ---------- Hero / bonus card wins ---------- */
+.bonus-card { position: relative; }
+
+.hero-card.fx-win, .bonus-card.fx-win { animation: fxCardWin .8s cubic-bezier(.22,1.2,.35,1); }
+@keyframes fxCardWin {
+  0% { transform: scale(1); }
+  26% { transform: scale(1.014); }
+  100% { transform: scale(1); }
+}
+
+/* A rim of light travelling around the card edge on a win. Inset to 0 rather
+   than -1px because .hero-card clips its overflow and would shave it off. */
+.hero-card.fx-win::after, .bonus-card.fx-win::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none; z-index: 2;
+  background: conic-gradient(from var(--fx-angle, 0deg),
+    transparent 0deg, rgba(var(--accent-rgb),0.85) 26deg, transparent 58deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  padding: 1.5px;
+  animation: fxRim 1.15s linear;
+}
+@property --fx-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+@keyframes fxRim {
+  0% { --fx-angle: 0deg; opacity: 1; }
+  85% { opacity: 1; }
+  100% { --fx-angle: 360deg; opacity: 0; }
+}
+
+/* ---------- Streak flame ---------- */
+.streak-pill.fx-ignite { animation: fxIgnite .95s cubic-bezier(.22,1.2,.35,1); }
+.streak-pill.fx-ignite .flame { animation: fxFlameUp .95s cubic-bezier(.2,1.5,.4,1); }
+@keyframes fxIgnite {
+  0% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb),0.55); }
+  100% { box-shadow: 0 0 0 16px rgba(var(--accent-rgb),0); }
+}
+@keyframes fxFlameUp {
+  0% { transform: scale(1) rotate(0); }
+  30% { transform: scale(1.55) rotate(-9deg); }
+  60% { transform: scale(1.15) rotate(7deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+/* ---------- Reward slots ---------- */
+/* A banked credit flips into place like a coin landing. */
+.reward-slot.fx-earned { animation: fxCardWin .8s cubic-bezier(.22,1.2,.35,1); }
+.reward-slot.fx-earned .reward-icon { animation: fxCoin .85s cubic-bezier(.22,.9,.35,1); }
+@keyframes fxCoin {
+  0% { transform: rotateY(0) scale(1); }
+  45% { transform: rotateY(540deg) scale(1.45); }
+  100% { transform: rotateY(720deg) scale(1); }
+}
+/* Once a track is nearly full it starts breathing, so you can see one coming. */
+.reward-track i.fx-charging { animation: fxCharge 1.9s ease-in-out infinite; }
+@keyframes fxCharge {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.45); }
+}
+
+/* ---------- Book cards ---------- */
+.book-card.fx-sealed { animation: fxSeal 1s cubic-bezier(.22,1.2,.35,1); }
+@keyframes fxSeal {
+  0% { transform: scale(1) rotate(0); }
+  30% { transform: scale(1.035) rotate(-.7deg); }
+  60% { transform: scale(.995) rotate(.4deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+/* ---------- Chip press ripple ---------- */
+.chip { position: relative; overflow: hidden; }
+.chip .fx-ripple {
+  position: absolute; border-radius: 50%; pointer-events: none;
+  background: rgba(var(--accent-rgb),0.45);
+  transform: translate(-50%, -50%) scale(0);
+  animation: fxRipple .52s cubic-bezier(.22,.9,.35,1) forwards;
+}
+@keyframes fxRipple {
+  0% { transform: translate(-50%, -50%) scale(0); opacity: .7; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+}
+
+/* ---------- Nav indicator ---------- */
+/* The active row grows its own accent bar instead of the border colour
+   snapping between rows. */
+.nav-btn { position: relative; }
+.nav-btn::after {
+  content: ''; position: absolute; left: -1px; top: 50%; width: 3px; height: 62%;
+  border-radius: 0 3px 3px 0; background: var(--accent);
+  transform: translateY(-50%) scaleY(0); transform-origin: center;
+  transition: transform .26s cubic-bezier(.22,1.4,.35,1);
+}
+.nav-btn.active::after { transform: translateY(-50%) scaleY(1); }
+.nav-btn:active { transform: translateX(1px); }
+
+/* ---------- View entrance stagger ---------- */
+/* The view already fades in; its cards now arrive just behind it in sequence,
+   which makes a tab switch feel like it dealt rather than blinked. */
+.view > * { animation: riseIn .34s cubic-bezier(.22,.9,.35,1) backwards; }
+.view > *:nth-child(1) { animation-delay: .02s; }
+.view > *:nth-child(2) { animation-delay: .06s; }
+.view > *:nth-child(3) { animation-delay: .10s; }
+.view > *:nth-child(4) { animation-delay: .14s; }
+.view > *:nth-child(5) { animation-delay: .18s; }
+.view > *:nth-child(n+6) { animation-delay: .22s; }
+
+/* ---------- Heatmap wave ---------- */
+.heat-cell { animation: fxCellIn .3s cubic-bezier(.22,.9,.35,1) backwards; }
+@keyframes fxCellIn {
+  from { opacity: 0; transform: scale(.55); }
+  to { opacity: 1; transform: scale(1); }
+}
+.heat-cell:hover { transform: scale(1.35); z-index: 2; position: relative; }
+
+/* ============================================================
+   Bonus round stats
+   A nested block inside the Stats view: four headline figures, a
+   six-month bar chart and the reward ledger. Uses the existing
+   metric/record components so it reads as part of the page.
+   ============================================================ */
+#bonusMetrics { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 14px; }
+@media (max-width: 1000px) { #bonusMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Inside a card the full metric cards are too heavy — flatten them onto the
+   card's own surface rather than stacking a second panel on it. */
+.metric-row.tight .metric-card {
+  background: var(--bg-elev-2); border-color: var(--border-soft);
+  box-shadow: none; padding: 11px 13px;
+}
+.metric-row.tight .metric-value { font-size: 20px; }
+.metric-row.tight .metric-card:hover { transform: none; border-color: var(--accent); }
+
+.sub-card {
+  background: var(--bg-elev-2); border: 1px solid var(--border-soft);
+  border-radius: 12px; padding: 13px 15px;
+  display: flex; flex-direction: column;
+}
+.sub-title {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .9px;
+  color: var(--text-dim); font-weight: 800; margin-bottom: 12px;
+}
+.sub-card .record-list { flex: 1; }
+.sub-card .record-row { border-bottom-color: var(--border); }
+
+/* Six-month bar chart. A month with nothing cleared keeps a flat sliver so the
+   axis stays readable as a timeline rather than collapsing to the months that
+   happened to go well. */
+.month-chart { display: flex; align-items: flex-end; gap: 10px; height: 132px; flex: 1; }
+.mc-col {
+  flex: 1; min-width: 0; height: 100%;
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px;
+}
+.mc-bar-wrap { width: 100%; flex: 1; display: flex; align-items: flex-end; justify-content: center; }
+.mc-bar {
+  width: 100%; max-width: 30px; min-height: 3px; border-radius: 5px 5px 2px 2px;
+  background: linear-gradient(180deg, var(--violet), #7c3aed);
+  transform-origin: bottom; animation: growBar .5s cubic-bezier(.22,.9,.35,1) backwards;
+  transition: filter .15s ease;
+}
+.mc-col:hover .mc-bar { filter: brightness(1.2); }
+.mc-bar.zero { background: var(--bg-elev-3); }
+.mc-bar.current { background: linear-gradient(180deg, var(--accent), var(--accent-2)); }
+.mc-val { font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+.mc-val.zero { color: var(--text-dim); font-weight: 600; }
+.mc-label { font-size: 9.5px; color: var(--text-dim); font-weight: 700; white-space: nowrap; }
+.mc-col.current .mc-label { color: var(--accent); }
+
+/* The ledger rows carry a spent/left split rather than one number, so the
+   second half is dimmed to keep the headline figure legible. */
+.record-row .rv .rv-dim { color: var(--text-dim); font-weight: 600; font-size: 11.5px; }
+
+/* ---------- Toasts ---------- */
+/* Upgraded from a plain text box: an icon, and a bar that drains so the
+   dismissal isn't a surprise. Hovering holds it open. */
+.toast {
+  display: flex; align-items: flex-start; gap: 10px;
+  overflow: hidden;
+  animation: fxToastIn .34s cubic-bezier(.18,1.3,.32,1);
+}
+@keyframes fxToastIn {
+  0% { opacity: 0; transform: translateX(26px) scale(.94); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+.toast.leaving { opacity: 0; transform: translateX(20px) scale(.96); }
+.toast-icon {
+  flex-shrink: 0; width: 17px; height: 17px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 10px; font-weight: 900; line-height: 1; margin-top: 1px;
+  background: rgba(var(--accent-rgb),0.18); color: var(--accent);
+}
+.toast.good .toast-icon { background: rgba(34,197,94,0.18); color: var(--green); }
+.toast.bad .toast-icon { background: rgba(239,68,68,0.18); color: var(--red); }
+.toast-body { flex: 1; min-width: 0; }
+.toast-timer {
+  position: absolute; left: 0; bottom: 0; height: 2px; width: 100%;
+  transform-origin: left center; background: var(--accent); opacity: .45;
+  animation: fxDrain linear forwards;
+}
+.toast { position: relative; }
+.toast.good .toast-timer { background: var(--green); }
+.toast.bad .toast-timer { background: var(--red); }
+.toast:hover .toast-timer { animation-play-state: paused; }
+@keyframes fxDrain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* ---------- Buttons ---------- */
+.btn.primary:not(:disabled):hover { transform: translateY(-1px); }
+.btn:not(:disabled):active { transform: translateY(0) scale(.975); }
+
+/* ============================================================
+   Reduced motion
+   Kills every decorative animation added here and by styles.css.
+   Effects driven from JS check the same media query, so confetti,
+   sparks and count-ups stop being generated at all rather than
+   being generated and then hidden.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .fx-layer { display: none; }
+  .fx-banner, .fx-banner-icon, .fx-banner-glow { animation: none; }
+  .fx-banner-glow { display: none; }
+  .view, .view > *,
+  .heat-cell, .toast,
+  .fx-pop, .fx-nudge,
+  .hero-card.fx-win, .bonus-card.fx-win,
+  .streak-pill.fx-ignite, .streak-pill.fx-ignite .flame,
+  .streak-pill.lit .flame,
+  .reward-slot.fx-earned, .reward-slot.fx-earned .reward-icon,
+  .reward-track i.fx-charging,
+  .book-card.fx-sealed,
+  .progress-fill.fx-done, .progress-fill.complete,
+  .bonus-card, .hero-cover, .metric-card, .book-card, .chart-bar, .bar-col {
+    animation: none !important;
+  }
+  .hero-card.fx-win::after, .bonus-card.fx-win::after,
+  .progress-fill.fx-grew::after { display: none; }
+  .nav-btn::after { transition: none; }
+  .heat-cell:hover { transform: none; }
+  .btn.primary:not(:disabled):hover, .btn:not(:disabled):active { transform: none; }
+  .toast-timer { animation: none; transform: scaleX(0); }
+  * { scroll-behavior: auto !important; }
+}

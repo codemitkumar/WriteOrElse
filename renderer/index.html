@@ -5,6 +5,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; img-src 'self' file: data:; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; connect-src 'none'" />
 <title>Write or Else</title>
 <link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="celebrate.css" />
 </head>
 <body>
   <div class="app">
@@ -101,6 +102,33 @@
           <div class="quick-add" id="bonusQuickAdd"></div>
         </div>
 
+        <!-- What the bonus rounds have bought -->
+        <div class="reward-strip hidden" id="rewardStrip">
+          <div class="reward-slot" id="rewardRerollSlot">
+            <div class="reward-icon">&#127920;</div>
+            <div class="reward-body">
+              <div class="reward-line">
+                <span class="reward-name">Banked rerolls</span>
+                <span class="reward-count" id="rewardRerollCount">0</span>
+              </div>
+              <div class="reward-track"><i id="rewardRerollFill"></i></div>
+              <div class="reward-sub" id="rewardRerollSub"></div>
+            </div>
+          </div>
+          <div class="reward-slot" id="rewardPickSlot">
+            <div class="reward-icon">&#127183;</div>
+            <div class="reward-body">
+              <div class="reward-line">
+                <span class="reward-name">Project picks</span>
+                <span class="reward-count" id="rewardPickCount">0</span>
+              </div>
+              <div class="reward-track"><i id="rewardPickFill"></i></div>
+              <div class="reward-sub" id="rewardPickSub"></div>
+            </div>
+            <button class="btn primary small hidden" id="pickProjectBtn">Choose tomorrow</button>
+          </div>
+        </div>
+
         <div class="metric-row" id="metricRow"></div>
 
         <div class="grid-2">
@@ -174,6 +202,25 @@
             <div id="recordsList" class="record-list"></div>
           </div>
         </div>
+
+        <div class="card">
+          <div class="card-title-row">
+            <div class="card-title">Bonus rounds</div>
+            <div class="card-note" id="bonusStatNote"></div>
+          </div>
+          <p class="modal-hint">Extra tasks handed out once the day's real target is done. They never touch your streak &mdash; these are the numbers on work you did when nothing was making you.</p>
+          <div class="metric-row tight" id="bonusMetrics"></div>
+          <div class="grid-2">
+            <div class="sub-card">
+              <div class="sub-title">Rounds cleared per month</div>
+              <div id="bonusMonthChart" class="month-chart"></div>
+            </div>
+            <div class="sub-card">
+              <div class="sub-title">What they bought</div>
+              <div id="bonusLedger" class="record-list"></div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- HISTORY -->
@@ -211,7 +258,7 @@
                 <option value="">All types</option>
                 <option value="write">Words written</option>
                 <option value="edit">Chapters edited</option>
-                <option value="plan">Chapter planned</option>
+                <option value="plan">Planning</option>
               </select>
             </div>
           </div>
@@ -276,10 +323,22 @@
               <span>Snoozes before it gets mad</span>
               <input type="number" id="setSnoozeThreshold" min="1" max="20" />
             </label>
-            <label class="span-2">
-              <span>Distraction processes (comma separated)</span>
-              <input type="text" id="setDistractions" />
-            </label>
+            <div class="span-2 app-picker">
+              <div class="app-picker-head">
+                <span class="app-picker-label">Apps to close when it gets mad</span>
+                <span class="app-picker-count" id="appPickerCount"></span>
+              </div>
+              <p class="modal-hint">Tick whatever pulls you away from the page. When punishment mode escalates, these get closed.</p>
+              <div class="app-picker-tools">
+                <input type="search" id="appSearch" placeholder="Search your apps…" autocomplete="off" />
+                <button type="button" class="btn ghost small" id="rescanAppsBtn">Rescan</button>
+              </div>
+              <div class="app-list" id="appList"></div>
+              <div class="app-manual">
+                <input type="text" id="appManualInput" placeholder="Not listed? Add its .exe by hand" autocomplete="off" />
+                <button type="button" class="btn ghost small" id="appManualAddBtn">Add</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -357,6 +416,23 @@
         </div>
 
         <div class="card">
+          <div class="card-title">Celebrations</div>
+          <p class="modal-hint">Confetti, banners and the small flourishes that fire when you clear something. Turning this off leaves the toasts and the numbers &mdash; you still get told, it just stops making a fuss. Windows' own "show animations" setting is respected either way.</p>
+          <div class="settings-grid">
+            <div class="switch-row">
+              <span>Celebrate cleared targets and bonus rounds</span>
+              <label class="toggle">
+                <input type="checkbox" id="setCelebrations" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="span-2 btn-row">
+              <button type="button" class="btn ghost small" id="previewCelebrationBtn">Preview a celebration</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="card-title">General</div>
           <div class="switch-row">
             <span>Launch automatically when you log in to Windows</span>
@@ -381,9 +457,39 @@
   </div>
 
   <!-- LOG PROGRESS MODAL -->
+  <!-- REROLL SPINNER -->
+  <div class="modal-backdrop hidden" id="spinnerModalBackdrop">
+    <div class="modal spinner-modal">
+      <div class="modal-title" id="spinnerTitle">Rolling a new mission</div>
+      <p class="modal-hint" id="spinnerHint">Wherever it lands, that's the day.</p>
+      <div class="reel-window">
+        <div class="reel-strip" id="reelStrip"></div>
+        <div class="reel-frame"></div>
+        <div class="reel-fade top"></div>
+        <div class="reel-fade bottom"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn primary" id="spinnerDoneBtn" disabled>Rolling&hellip;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROJECT PICK -->
+  <div class="modal-backdrop hidden" id="pickModalBackdrop">
+    <div class="modal pick-modal">
+      <div class="modal-title">Pick tomorrow's project</div>
+      <p class="modal-hint" id="pickHint"></p>
+      <div class="pick-deck" id="pickDeck"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" data-close-modal>Not now</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="logModalBackdrop">
     <div class="modal">
       <div class="modal-title" id="logModalTitle">Log progress</div>
+      <p class="modal-hint hidden" id="logModalHint"></p>
       <label class="modal-label">Book
         <select id="logBookSelect"></select>
       </label>
@@ -391,7 +497,7 @@
         <select id="logTypeSelect">
           <option value="write">Words written</option>
           <option value="edit">Chapters edited</option>
-          <option value="plan">Chapter planned</option>
+          <option value="plan">Planning</option>
         </select>
       </label>
       <label class="modal-label" id="logAmountRow">
@@ -405,6 +511,10 @@
       <label class="modal-label checkbox-row hidden" id="chapterCompleteRow">
         <input type="checkbox" id="chapterCompleteInput" />
         <span>Chapter complete <span class="hint-inline">(if you're under target, the rest gets handed to a new book)</span></span>
+      </label>
+      <label class="modal-label checkbox-row hidden" id="chapterPlannedRow">
+        <input type="checkbox" id="chapterPlannedInput" checked />
+        <span>A whole chapter is planned <span class="hint-inline">(untick it if you were only working things out — the book stays in planning)</span></span>
       </label>
       <div class="modal-actions">
         <button class="btn ghost" data-close-modal>Cancel</button>
@@ -507,6 +617,7 @@
 
   <div class="toast-stack" id="toastStack"></div>
 
+  <script src="celebrate.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

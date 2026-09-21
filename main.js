@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { Store } = require('./store');
 const punisher = require('./punisher');
+const { listInstalledApps } = require('./apps');
 
 let mainWindow = null;
 let tray = null;
@@ -183,10 +184,7 @@ ipcMain.handle('book:startEditing', withTrayRefresh((e, bookId) => {
   store.startEditing(bookId);
   return store.getState();
 }));
-ipcMain.handle('book:needsPlanning', withTrayRefresh((e, bookId) => {
-  store.needsPlanning(bookId);
-  return store.getState();
-}));
+ipcMain.handle('book:needsPlanning', withTrayRefresh((e, bookId) => store.needsPlanning(bookId)));
 ipcMain.handle('book:cancelPlanning', withTrayRefresh((e, bookId) => {
   store.cancelPlanning(bookId);
   return store.getState();
@@ -205,6 +203,8 @@ ipcMain.handle('log:delete', withTrayRefresh((e, logId) => store.deleteLog(logId
 
 ipcMain.handle('day:toggleRest', withTrayRefresh(() => store.toggleRestDay()));
 ipcMain.handle('day:reroll', withTrayRefresh(() => store.rerollTarget()));
+
+ipcMain.handle('reward:pickTomorrow', withTrayRefresh((e, bookId) => store.pickTomorrow(bookId)));
 
 ipcMain.handle('book:pickCover', async (e, bookId) => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -232,6 +232,10 @@ ipcMain.handle('settings:update', withTrayRefresh((e, partial) => {
   app.setLoginItemSettings({ openAtLogin: !!updated.autoLaunch });
   return store.getState();
 }));
+
+// The settings screen asks for this on demand — scanning the Start Menu and the
+// installed Store packages takes a few seconds, so it never runs at startup.
+ipcMain.handle('apps:list', () => listInstalledApps([path.basename(process.execPath), 'electron.exe']));
 
 ipcMain.handle('data:export', async () => {
   const result = await dialog.showSaveDialog(mainWindow, {

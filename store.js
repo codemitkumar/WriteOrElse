@@ -20,11 +20,17 @@ const DEFAULT_SETTINGS = {
   restDaysPerWeek: 1,  // guilt-free days off that don't break the streak
   rerollsPerDay: 1,    // how many times you can reroll an untouched daily target
   bonusTasksEnabled: true, // clear the day's target and consequence-free extra tasks keep coming
+  celebrations: true,  // confetti/banners on a cleared target; the OS reduced-motion setting still wins
   theme: 'dark',
   accent: 'ember'
 };
 
 const HISTORY_DAYS = 70; // 10 weeks of heatmap
+
+// Bonus rounds are optional and always will be, so what they pay has to be a
+// bonus too — never the only route to something you need. These two are it.
+const BONUSES_PER_REROLL = 3;  // cleared rounds, lifetime, per banked reroll
+const BONUSES_PER_PICK = 15;   // cleared rounds within one calendar month, per project pick
 
 function todayStr(d = new Date()) {
   const y = d.getFullYear();
@@ -60,10 +66,12 @@ class Store {
         settings: Object.assign({}, DEFAULT_SETTINGS, parsed.settings || {})
       });
       merged.books = (merged.books || []).map(b => Object.assign({
-        paused: false, targetWords: null, chaptersPlanned: 0, chaptersWritten: 0, blurb: ''
+        paused: false, targetWords: null, chaptersPlanned: 0, chaptersWritten: 0, blurb: '',
+        autoPlanning: false
       }, b));
       if (!Array.isArray(merged.restDays)) merged.restDays = [];
       if (!merged.rerolls) merged.rerolls = { date: null, count: 0 };
+      merged.rewards = Object.assign({ rerollsSpent: 0, picksSpent: 0, nextPick: null }, merged.rewards || {});
       if (!merged.bonusTargets) merged.bonusTargets = {};
       // v2 files stored one bonus object per day; the chain is a list now.
       for (const [date, v] of Object.entries(merged.bonusTargets)) {
@@ -89,6 +97,10 @@ class Store {
       activeDates: [],
       restDays: [],
       rerolls: { date: null, count: 0 },
+      // Earned credits are derived from the bonus history every time they're
+      // asked for, so a deleted log walks them back on its own. Only what's been
+      // spent has to be remembered.
+      rewards: { rerollsSpent: 0, picksSpent: 0, nextPick: null },
       activeEditingBookId: null,
       currentWordTarget: null,
       windowBounds: null,
@@ -150,7 +162,13 @@ class Store {
   _isTargetStillValid(target) {
     const book = this.data.books.find(b => b.id === target.bookId);
     if (!book || book.paused) return false;
-    if (target.type === 'write') return book.stage === 'writing';
+    // An auto-flip to planning happens mid-day, off the back of a chapter you
+    // just finished. Today's word target is still perfectly writable, so don't
+    // let the stage change yank it out from under you — tomorrow's target is
+    // generated from the stage and will be the planning day.
+    // stagePinned is set when a book was moved to planning without a reroll to
+    // pay for a new mission — the words are still owed, so the target stands.
+    if (target.type === 'write') return book.stage === 'writing' || !!book.autoPlanning || !!target.stagePinned;
     if (target.type === 'plan') return book.stage === 'planning' || book.stage === 'writing';
     if (target.type === 'edit') return book.stage === 'editing' && book.id === this.data.activeEditingBookId;
     return false;
@@ -276,7 +294,8 @@ class Store {
       this.data.dailyTargets[date] = null;
       return;
     }
-    this.data.dailyTargets[date] = this._buildTargetFor(this._weightedPick(pool));
+    const picked = this._claimPickFor(date, pool);
+    this.data.dailyTargets[date] = this._buildTargetFor(picked || this._weightedPick(pool));
   }
 
   // ---- bonus rounds ----
@@ -388,6 +407,81 @@ class Store {
     return this._bonusChain(date).some(b => b.met || this._bonusLogged(date, b) > 0);
   }
 
+  // ---- what bonus rounds pay ----
+  // Everything earned is counted straight off the bonus history, so deleting the
+  // log that cleared a round takes the credit back with it. `rewards.*Spent` is
+  // the only stored half, and it's clamped in case a rollback lands under it.
+
+  _clearedByMonth() {
+    const byMonth = new Map();
+    for (const [date, chain] of Object.entries(this.data.bonusTargets)) {
+      if (!Array.isArray(chain)) continue;
+      const cleared = chain.filter(b => b.met).length;
+      if (!cleared) continue;
+      const month = date.slice(0, 7);
+      byMonth.set(month, (byMonth.get(month) || 0) + cleared);
+    }
+    return byMonth;
+  }
+
+  bonusesClearedTotal() {
+    let total = 0;
+    for (const n of this._clearedByMonth().values()) total += n;
+    return total;
+  }
+
+  bonusesClearedThisMonth() {
+    return this._clearedByMonth().get(todayStr().slice(0, 7)) || 0;
+  }
+
+  rerollCredits() {
+    const earned = Math.floor(this.bonusesClearedTotal() / BONUSES_PER_REROLL);
+    return Math.max(0, earned - (this.data.rewards.rerollsSpent || 0));
+  }
+
+  // Per calendar month, so a huge month can pay twice and a quiet one doesn't
+  // carry a half-finished tab into the next.
+  projectPicks() {
+    let earned = 0;
+    for (const n of this._clearedByMonth().values()) earned += Math.floor(n / BONUSES_PER_PICK);
+    return Math.max(0, earned - (this.data.rewards.picksSpent || 0));
+  }
+
+  // Spend a pick: tomorrow's mission is this book, whatever the weighting would
+  // have said. The type and amount are still rolled from where the book is.
+  pickTomorrow(bookId) {
+    this._ensureToday();
+    if (this.projectPicks() <= 0) {
+      return { ok: false, message: 'No project picks banked yet.', state: this.getState() };
+    }
+    const book = this._eligiblePool().find(b => b.id === bookId);
+    if (!book) {
+      return { ok: false, message: "That book isn't in the rotation.", state: this.getState() };
+    }
+    const tomorrow = shiftDate(todayStr(), 1);
+    this.data.rewards.picksSpent = (this.data.rewards.picksSpent || 0) + 1;
+    this.data.rewards.nextPick = { date: tomorrow, bookId };
+    // A target generated ahead of time would ignore the pick, so throw it away.
+    if (this.data.dailyTargets[tomorrow]) this._generateTarget(tomorrow);
+    this.save();
+    return { ok: true, message: `Tomorrow is "${book.title}". Locked in.`, state: this.getState() };
+  }
+
+  // The pick stays live for its whole day rather than being consumed on first
+  // use, so rerolling a picked day rerolls the task and keeps the book.
+  _claimPickFor(date, pool) {
+    const pick = this.data.rewards.nextPick;
+    if (!pick) return null;
+    if (pick.date < todayStr()) { this.data.rewards.nextPick = null; return null; }
+    if (pick.date !== date) return null;
+    const book = pool.find(b => b.id === pick.bookId);
+    if (book) return book;
+    // Paused, deleted or finished before its day came around — hand the pick back.
+    this.data.rewards.nextPick = null;
+    this.data.rewards.picksSpent = Math.max(0, (this.data.rewards.picksSpent || 0) - 1);
+    return null;
+  }
+
   // ---- rest days & rerolls ----
 
   isRestDay(date = todayStr()) {
@@ -417,10 +511,14 @@ class Store {
     return { ok: true, message: "Rest day taken. Your streak is safe — don't make a habit of it.", state: this.getState() };
   }
 
-  rerollsLeft() {
+  freeRerollsLeft() {
     const today = todayStr();
     const used = this.data.rerolls.date === today ? this.data.rerolls.count : 0;
     return Math.max(0, (this.data.settings.rerollsPerDay || 0) - used);
+  }
+
+  rerollsLeft() {
+    return this.freeRerollsLeft() + this.rerollCredits();
   }
 
   _hasProgressOnTarget(date) {
@@ -437,17 +535,57 @@ class Store {
     return !this._hasProgressOnTarget(today);
   }
 
+  // The day's free reroll goes first; a banked one is only touched once that's
+  // gone, so a credit you earned is never spent on a day you didn't need it.
+  // Returns true when it came out of the bank.
+  _spendReroll() {
+    const today = todayStr();
+    const banked = this.freeRerollsLeft() <= 0;
+    if (banked) {
+      this.data.rewards.rerollsSpent = (this.data.rewards.rerollsSpent || 0) + 1;
+    } else {
+      const used = this.data.rerolls.date === today ? this.data.rerolls.count : 0;
+      this.data.rerolls = { date: today, count: used + 1 };
+    }
+    return banked;
+  }
+
   rerollTarget() {
     const today = todayStr();
     this._ensureToday();
     if (!this.canReroll()) {
       return { ok: false, message: 'Nothing to reroll — either you already started, or you are out of rerolls.', state: this.getState() };
     }
-    const used = this.data.rerolls.date === today ? this.data.rerolls.count : 0;
-    this.data.rerolls = { date: today, count: used + 1 };
+    const banked = this._spendReroll();
     this._generateTarget(today);
     this.save();
-    return { ok: true, message: 'New target rolled. No takebacks.', state: this.getState() };
+    return {
+      ok: true,
+      banked,
+      message: banked ? 'Banked reroll spent. No takebacks.' : 'New target rolled. No takebacks.',
+      state: this.getState()
+    };
+  }
+
+  // Everything the dashboard needs to show what the bonus rounds have bought and
+  // how close the next one is.
+  rewardState() {
+    const total = this.bonusesClearedTotal();
+    const month = this.bonusesClearedThisMonth();
+    const pick = this.data.rewards.nextPick;
+    const pickBook = pick ? this.data.books.find(b => b.id === pick.bookId) : null;
+    return {
+      clearedTotal: total,
+      clearedThisMonth: month,
+      perReroll: BONUSES_PER_REROLL,
+      perPick: BONUSES_PER_PICK,
+      rerollCredits: this.rerollCredits(),
+      toNextReroll: BONUSES_PER_REROLL - (total % BONUSES_PER_REROLL),
+      projectPicks: this.projectPicks(),
+      toNextPick: BONUSES_PER_PICK - (month % BONUSES_PER_PICK),
+      freeRerollsLeft: this.freeRerollsLeft(),
+      nextPick: pick && pickBook ? { date: pick.date, bookId: pick.bookId, title: pickBook.title } : null
+    };
   }
 
   // ---- history & stats ----
@@ -497,6 +635,74 @@ class Store {
     return out;
   }
 
+  // ---- bonus round stats ----
+  // Derived off the bonus history on every read, the same way the credits are,
+  // so deleting the log that cleared a round walks the whole picture back
+  // together — totals, clear rate and the ledger included. The earned figures
+  // reuse bonusesClearedTotal()/_clearedByMonth() rather than recounting, so
+  // this can never disagree with what the dashboard is paying out.
+  bonusStats() {
+    const today = todayStr();
+    const byMonth = this._clearedByMonth();
+    const clearedTotal = this.bonusesClearedTotal();
+
+    let offered = 0, clearedToday = 0, offeredToday = 0, daysCleared = 0;
+    let bestDay = { date: null, count: 0 };
+    for (const [date, chain] of Object.entries(this.data.bonusTargets)) {
+      if (!Array.isArray(chain) || !chain.length) continue;
+      const open = chain[chain.length - 1].met ? 0 : 1;
+      // A round still on offer today hasn't been turned down yet, so it doesn't
+      // count against the clear rate until the day is over.
+      offered += date === today ? chain.length - open : chain.length;
+      const done = chain.filter(b => b.met).length;
+      if (done) daysCleared += 1;
+      if (done > bestDay.count) bestDay = { date, count: done };
+      if (date === today) { clearedToday = done; offeredToday = chain.length; }
+    }
+
+    const rerollsEarned = Math.floor(clearedTotal / BONUSES_PER_REROLL);
+    let picksEarned = 0;
+    for (const n of byMonth.values()) picksEarned += Math.floor(n / BONUSES_PER_PICK);
+
+    // Six months including empty ones, so a quiet month reads as a gap rather
+    // than vanishing out of the chart.
+    const monthly = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthly.push({
+        month: key,
+        label: d.toLocaleDateString(undefined, { month: 'short' }),
+        cleared: byMonth.get(key) || 0
+      });
+    }
+
+    return {
+      offered,
+      cleared: clearedTotal,
+      clearedThisMonth: this.bonusesClearedThisMonth(),
+      clearedToday,
+      offeredToday,
+      clearRate: offered ? Math.round((clearedTotal / offered) * 100) : 0,
+      daysCleared,
+      avgPerActiveDay: daysCleared ? Math.round((clearedTotal / daysCleared) * 10) / 10 : 0,
+      bestDay,
+      monthly,
+      perReroll: BONUSES_PER_REROLL,
+      perPick: BONUSES_PER_PICK,
+      rerollsEarned,
+      // Clamped: a rollback can land the earned total under what was spent.
+      rerollsSpent: Math.min(rerollsEarned, this.data.rewards.rerollsSpent || 0),
+      rerollsLeft: this.rerollCredits(),
+      picksEarned,
+      picksSpent: Math.min(picksEarned, this.data.rewards.picksSpent || 0),
+      picksLeft: this.projectPicks(),
+      toNextReroll: BONUSES_PER_REROLL - (clearedTotal % BONUSES_PER_REROLL),
+      toNextPick: BONUSES_PER_PICK - (this.bonusesClearedThisMonth() % BONUSES_PER_PICK)
+    };
+  }
+
   getStats() {
     const today = todayStr();
     const logs = this.data.logs;
@@ -516,8 +722,6 @@ class Store {
     const totalWords = logs.filter(l => l.type === 'write').reduce((a, l) => a + l.amount, 0);
     const totalChapters = logs.filter(l => l.type === 'edit').reduce((a, l) => a + l.amount, 0);
     const totalPlans = logs.filter(l => l.type === 'plan').length;
-    const allBonuses = Object.values(this.data.bonusTargets)
-      .flatMap(v => Array.isArray(v) ? v : (v ? [v] : []));
 
     let met = 0, missed = 0, rested = 0;
     for (const d of history) {
@@ -545,8 +749,7 @@ class Store {
       targetsMissed: missed,
       restDaysTaken: rested,
       consistency: scored ? Math.round((met / scored) * 100) : 0,
-      bonusesEarned: allBonuses.length,
-      bonusesCompleted: allBonuses.filter(b => b && b.met).length,
+      bonus: this.bonusStats(),
       booksDone: this.data.books.filter(b => b.stage === 'done').length,
       history
     };
@@ -589,6 +792,7 @@ class Store {
       restDaysLeft: this.restDaysLeft(),
       canReroll: this.canReroll(),
       rerollsLeft: this.rerollsLeft(),
+      rewards: this.rewardState(),
       stats: this.getStats()
     };
   }
@@ -608,6 +812,7 @@ class Store {
       coverPath: null,
       blurb: '',
       paused: false,
+      autoPlanning: false,
       createdAt: new Date().toISOString()
     };
     this.data.books.push(book);
@@ -768,18 +973,71 @@ class Store {
     this.save();
   }
 
+  // Flagging the book the day is already built around is a way out of the day's
+  // words: the target it invalidates would otherwise be regenerated for free.
+  // So it costs a reroll, the same as swapping the target by hand. Only a live
+  // word target counts — a met one is history, and a plan target survives the
+  // move on its own.
+  planningCostsReroll(bookId) {
+    const target = this.data.dailyTargets[todayStr()];
+    return !!(target && !target.met && target.type === 'write' && target.bookId === bookId);
+  }
+
   needsPlanning(bookId) {
+    this._ensureToday();
     const b = this.data.books.find(x => x.id === bookId);
-    if (!b || b.stage !== 'writing') return;
+    if (!b || b.stage !== 'writing') {
+      return { ok: false, message: "That book isn't in the writing stage.", state: this.getState() };
+    }
+    const today = todayStr();
+    const costs = this.planningCostsReroll(bookId);
+    const paid = costs && this.rerollsLeft() > 0;
+
     b.stage = 'planning';
+    b.autoPlanning = false;
+
+    let banked = false;
+    if (paid) {
+      banked = this._spendReroll();
+      this._generateTarget(today);
+    } else if (costs) {
+      // Nothing left to pay with. The book moves either way — you shouldn't be
+      // stuck writing into a book you know needs planning — but the day keeps
+      // asking for its words.
+      this.data.dailyTargets[today].stagePinned = true;
+    }
+
     this.save();
+    let message = 'Flagged for planning — no word counts until you plan a chapter.';
+    if (paid) message = banked
+      ? 'Moved to planning. A banked reroll paid for a new mission.'
+      : "Moved to planning. Today's reroll paid for a new mission.";
+    else if (costs) message = "Moved to planning — but with no rerolls left, today's words still stand.";
+    return { ok: true, spentReroll: paid, banked, targetChanged: paid, message, state: this.getState() };
   }
 
   cancelPlanning(bookId) {
     const b = this.data.books.find(x => x.id === bookId);
     if (!b || b.stage !== 'planning') return;
     b.stage = 'writing';
+    b.autoPlanning = false;
     this.save();
+  }
+
+  // Planning days for a writing book are otherwise a dice roll, so a book could
+  // burn through all five chapters it had planned, keep drawing write days, and
+  // never be handed the planning day it actually needs. Once the chapters
+  // written catch up with the chapters planned, move it to planning outright.
+  //
+  // Only for books that have been planned at all — if chaptersPlanned is 0 the
+  // writer isn't using planning days, and forcing one on them every chapter
+  // would be nagging, not helping.
+  _maybePlanExhausted(book) {
+    if (book.stage !== 'writing') return;
+    const planned = book.chaptersPlanned || 0;
+    if (planned <= 0 || (book.chaptersWritten || 0) < planned) return;
+    book.stage = 'planning';
+    book.autoPlanning = true;
   }
 
   // Escape hatch for a book marked "drafted" too early.
@@ -834,7 +1092,7 @@ class Store {
     this.save();
   }
 
-  logProgress({ bookId, type, amount, note, chapterComplete }) {
+  logProgress({ bookId, type, amount, note, chapterComplete, chapterPlanned }) {
     // Make sure today's target is generated/reconciled before we check it —
     // a stage change (e.g. flagging a book "needs planning") right before this
     // call could otherwise leave a stale target that silently never matches.
@@ -844,16 +1102,35 @@ class Store {
     if (!b) throw new Error('Book not found');
     amount = Math.max(0, parseInt(amount, 10) || 0);
 
-    const entry = { id: uid(), date: today, bookId, type, amount, note: note || '', chapterComplete: !!chapterComplete, createdAt: new Date().toISOString() };
+    const entry = {
+      id: uid(), date: today, bookId, type, amount, note: note || '',
+      chapterComplete: !!chapterComplete,
+      // Logs written before the app asked the question always meant "yes", so an
+      // omitted flag has to read as one.
+      chapterPlanned: type === 'plan' ? chapterPlanned !== false : false,
+      createdAt: new Date().toISOString()
+    };
     this.data.logs.push(entry);
 
     b.lastWorkedAt = today;
     if (type === 'plan') {
-      b.chaptersPlanned = (b.chaptersPlanned || 0) + 1;
-      if (b.stage === 'planning') b.stage = 'writing';
+      // A planning day doesn't always end with a chapter in it — some of them go
+      // on working out where the story is even going. Only a chapter actually
+      // planned counts and sends the book back to writing; anything else leaves
+      // it in planning, and tomorrow asks again.
+      if (entry.chapterPlanned) {
+        b.chaptersPlanned = (b.chaptersPlanned || 0) + 1;
+        if (b.stage === 'planning') {
+          b.stage = 'writing';
+          b.autoPlanning = false;
+        }
+      }
     } else if (type === 'write') {
       b.wordsWritten = (b.wordsWritten || 0) + amount;
-      if (entry.chapterComplete) b.chaptersWritten = (b.chaptersWritten || 0) + 1;
+      if (entry.chapterComplete) {
+        b.chaptersWritten = (b.chaptersWritten || 0) + 1;
+        this._maybePlanExhausted(b);
+      }
     } else if (type === 'edit') {
       b.chaptersEdited = Math.min((b.totalChapters || amount), (b.chaptersEdited || 0) + amount);
       if (b.totalChapters && b.chaptersEdited >= b.totalChapters) {
@@ -883,12 +1160,20 @@ class Store {
     if (b) {
       if (entry.type === 'write') {
         b.wordsWritten = Math.max(0, (b.wordsWritten || 0) - entry.amount);
-        if (entry.chapterComplete) b.chaptersWritten = Math.max(0, (b.chaptersWritten || 0) - 1);
+        if (entry.chapterComplete) {
+          b.chaptersWritten = Math.max(0, (b.chaptersWritten || 0) - 1);
+          // Only undo a flip this app made — a book the writer flagged for
+          // planning by hand stays flagged.
+          if (b.autoPlanning && b.stage === 'planning' && b.chaptersWritten < (b.chaptersPlanned || 0)) {
+            b.stage = 'writing';
+            b.autoPlanning = false;
+          }
+        }
       } else if (entry.type === 'edit') {
         b.chaptersEdited = Math.max(0, (b.chaptersEdited || 0) - entry.amount);
         if (b.stage === 'done' && b.totalChapters && b.chaptersEdited < b.totalChapters) b.stage = 'editing';
       } else if (entry.type === 'plan') {
-        b.chaptersPlanned = Math.max(0, (b.chaptersPlanned || 0) - 1);
+        if (entry.chapterPlanned !== false) b.chaptersPlanned = Math.max(0, (b.chaptersPlanned || 0) - 1);
       }
       const remaining = this.data.logs.filter(l => l.bookId === b.id);
       b.lastWorkedAt = remaining.length ? remaining[remaining.length - 1].date : null;

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
 
   toggleRestDay: () => ipcRenderer.invoke('day:toggleRest'),
   rerollTarget: () => ipcRenderer.invoke('day:reroll'),
+  pickTomorrow: (bookId) => ipcRenderer.invoke('reward:pickTomorrow', bookId),
 
   updateSettings: (partial) => ipcRenderer.invoke('settings:update', partial),
 
@@ -34,6 +35,8 @@ contextBridge.exposeInMainWorld('api', {
   setChaptersWritten: (bookId, count) => ipcRenderer.invoke('book:setChaptersWritten', { bookId, count }),
   setWordsWritten: (bookId, words) => ipcRenderer.invoke('book:setWordsWritten', { bookId, words }),
   setTotalChapters: (bookId, count) => ipcRenderer.invoke('book:setTotalChapters', { bookId, count }),
+
+  listApps: () => ipcRenderer.invoke('apps:list'),
 
   exportData: () => ipcRenderer.invoke('data:export'),
   revealData: () => ipcRenderer.invoke('data:reveal'),

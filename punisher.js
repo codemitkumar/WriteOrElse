@@ -9,7 +9,10 @@ let checkTimer = null;
 
 function killProcesses(names) {
   names.forEach(name => {
-    exec(`taskkill /IM "${name}" /F`, () => {});
+    // /T takes the children too — launcher-shaped apps (Riot, Steam, the Store
+    // build of WhatsApp) put their actual window in a child process, and killing
+    // only the launcher leaves the distraction sitting right there.
+    exec(`taskkill /IM "${name}" /F /T`, () => {});
   });
 }
 

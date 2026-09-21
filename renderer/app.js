@@ -43,15 +43,33 @@ function relativeDate(ds) {
 }
 
 // ---------------- Toasts ----------------
-function toast(message, kind = '') {
+const TOAST_ICON = { good: '✓', bad: '!', '': '•' };
+
+function toast(message, kind = '', duration = 3200) {
   const node = document.createElement('div');
   node.className = `toast ${kind}`;
-  node.textContent = message;
+  node.innerHTML = '<span class="toast-icon"></span><span class="toast-body"></span><i class="toast-timer"></i>';
+  node.querySelector('.toast-icon').textContent = TOAST_ICON[kind] || TOAST_ICON[''];
+  node.querySelector('.toast-body').textContent = message;
+  node.querySelector('.toast-timer').style.animationDuration = duration + 'ms';
   el('toastStack').appendChild(node);
-  setTimeout(() => {
+
+  // The drain bar pauses on hover (CSS), so the removal timer has to pause with
+  // it — otherwise the bar freezes while the toast disappears under the cursor.
+  let remaining = duration;
+  let startedAt = 0;
+  let timeoutId = null;
+  const leave = () => {
+    clearTimeout(timeoutId);
     node.classList.add('leaving');
-    setTimeout(() => node.remove(), 260);
-  }, 3200);
+    setTimeout(() => node.remove(), 300);
+  };
+  const arm = () => { startedAt = Date.now(); timeoutId = setTimeout(leave, remaining); };
+  const hold = () => { clearTimeout(timeoutId); remaining = Math.max(400, remaining - (Date.now() - startedAt)); };
+  node.addEventListener('mouseenter', hold);
+  node.addEventListener('mouseleave', arm);
+  node.addEventListener('click', leave);
+  arm();
 }
 
 // ---------------- Modals ----------------
@@ -96,23 +114,183 @@ document.querySelectorAll('[data-close-modal]').forEach(btn => {
 });
 
 // ---------------- Boot / refresh ----------------
-async function refresh() {
-  state = await window.api.getState();
+// The renderer rebuilds its lists with innerHTML, which replays every entrance
+// animation on them. That's fine after an action — it's how the UI acknowledges
+// what you did — but the once-a-minute rollover poll was replaying the whole
+// dashboard for nothing, so charts regrew and cells flickered while you were
+// reading them. Every render stamps the state it drew, and the poll compares
+// before it commits.
+let lastStateKey = null;
+
+async function refresh({ onlyIfChanged = false } = {}) {
+  const next = await window.api.getState();
+  if (onlyIfChanged && JSON.stringify(next) === lastStateKey) return;
+  state = next;
   applyAppearance(state.settings);
   render();
 }
 
 function render() {
+  lastStateKey = JSON.stringify(state);
+  const before = fxSignals.last;
   renderDashboard();
+  renderRewards();
   renderBooks();
   renderStats();
   renderHeatmap();
   renderLogFilters();
+  // Runs last, so anything it anchors to (the hero card, the bonus card, a book
+  // card) is already laid out at its final position.
+  runCelebrations(before, fxSignals.capture());
 }
 
 function applyAppearance(s) {
   document.documentElement.dataset.theme = s.theme || 'dark';
   document.documentElement.dataset.accent = s.accent || 'ember';
+  window.Celebrate.setEnabled(s.celebrations !== false);
+}
+
+// ---------------- Celebrations ----------------
+// Every win is detected the same way: snapshot the handful of numbers that mean
+// something, and compare against the previous render. Nothing has to remember
+// to fire a celebration at its call site, so a target met from a quick-add chip,
+// the full log dialog, a deleted entry being re-added or the day rolling over
+// all light up identically.
+const fxSignals = {
+  last: null,
+  read(s) {
+    const books = s.books || [];
+    const r = s.rewards || {};
+    return {
+      targetMet: !!(s.target && s.target.met),
+      bonusCleared: s.bonusCleared || 0,
+      rerollCredits: r.rerollCredits || 0,
+      projectPicks: r.projectPicks || 0,
+      streak: (s.streak && s.streak.current) || 0,
+      longest: (s.streak && s.streak.longest) || 0,
+      wordLevel: (s.wordTarget && s.wordTarget.current) || 0,
+      doneIds: books.filter(b => b.stage === 'done').map(b => b.id)
+    };
+  },
+  capture() {
+    const next = this.read(state);
+    this.last = next;
+    return next;
+  }
+};
+
+function bookById(id) { return (state.books || []).find(b => b.id === id); }
+
+function runCelebrations(before, after) {
+  // No previous snapshot means this is the first paint of the session. Opening
+  // the app to a target you finished yesterday evening is not news.
+  if (!before) return;
+
+  const events = [];
+
+  // A finished book outranks everything else the app can hand out.
+  const newlyDone = after.doneIds.filter(id => !before.doneIds.includes(id));
+  for (const id of newlyDone) {
+    const book = bookById(id);
+    events.push({
+      tier: 4, tone: 'gold', icon: '🏆',
+      title: 'Book finished',
+      subtitle: book ? `"${book.title}" is done — written, edited, closed.` : 'That one is done.',
+      duration: 4200,
+      anchor: document.querySelector(`.book-card[data-id="${id}"]`),
+      seal: true
+    });
+  }
+
+  if (after.projectPicks > before.projectPicks) {
+    events.push({
+      tier: 3, tone: 'gold', icon: '🃏',
+      title: 'Project pick unlocked',
+      subtitle: 'Spend it to choose which book tomorrow is about.',
+      duration: 3600,
+      anchor: el('rewardPickSlot'),
+      earned: true
+    });
+  }
+
+  if (after.targetMet && !before.targetMet) {
+    const book = state.targetBook;
+    events.push({
+      tier: 3, tone: 'green', icon: '✓',
+      title: 'Target cleared',
+      subtitle: book ? `"${book.title}" — that's today's, and the streak with it.` : "That's today's, and the streak with it.",
+      duration: 3200,
+      anchor: el('targetCard'),
+      stamp: 'Complete',
+      win: true,
+      ignite: true
+    });
+  }
+
+  // A record is worth saying out loud, but it rides along with the target that
+  // set it rather than throwing a second lot of confetti.
+  if (after.longest > before.longest && after.longest > 1 && after.streak === after.longest) {
+    events.push({
+      tier: 2, tone: 'gold', icon: '🔥',
+      title: `New record — ${after.longest} days`,
+      subtitle: 'Longest run yet. Nothing forces you to keep it.',
+      duration: 3400,
+      anchor: el('streakPill'),
+      ignite: true,
+      quiet: true
+    });
+  }
+
+  if (after.bonusCleared > before.bonusCleared) {
+    const n = after.bonusCleared;
+    const more = state.bonus && !state.bonus.met;
+    const credit = after.rerollCredits > before.rerollCredits;
+    events.push({
+      tier: 2, tone: 'violet', icon: '✨',
+      title: n > 1 ? `Bonus round ${n} cleared` : 'Bonus round cleared',
+      subtitle: credit
+        ? 'That one banked you a reroll.'
+        : (more ? 'Another one is already waiting. Still optional.' : 'Nothing more is asked of you today.'),
+      duration: 3000,
+      anchor: el('bonusCard'),
+      win: true
+    });
+  }
+
+  // A banked reroll is a quiet flourish on the slot that earned it — the round
+  // that produced it already got the banner.
+  if (after.rerollCredits > before.rerollCredits) {
+    const slot = el('rewardRerollSlot');
+    window.Celebrate.pulse(slot, 'fx-earned');
+    window.Celebrate.sparkle(el('rewardRerollCount'), 12, 'gold');
+  }
+
+  if (after.wordLevel > before.wordLevel) {
+    const cap = state.wordTarget.cap;
+    toast(after.wordLevel >= cap
+      ? `Word level at the ${fmt(cap)} cap. It stops climbing here.`
+      : `Word level up — tomorrow asks for ${fmt(after.wordLevel)}.`, 'good', 4200);
+  }
+
+  if (!events.length) return;
+
+  // Biggest first: it takes the screen-wide effects and the front of the banner
+  // queue, and everything else lands as a local flourish behind it.
+  events.sort((a, b) => b.tier - a.tier);
+  events.forEach((e, i) => {
+    if (e.ignite) window.Celebrate.pulse(el('streakPill'), 'fx-ignite');
+    if (e.seal && e.anchor) window.Celebrate.pulse(e.anchor, 'fx-sealed');
+    if (i === 0 && !e.quiet) {
+      window.Celebrate.party(e);
+      return;
+    }
+    window.Celebrate.banner({ icon: e.icon, title: e.title, subtitle: e.subtitle, tone: e.tone, duration: e.duration });
+    if (e.anchor) {
+      window.Celebrate.shockwave(e.anchor, e.tone);
+      if (e.win) window.Celebrate.pulse(e.anchor, 'fx-win');
+      if (e.stamp) window.Celebrate.stamp(e.anchor, e.stamp, e.tone);
+    }
+  });
 }
 
 function switchView(view) {
@@ -152,6 +330,45 @@ function ringHtml(pct, big, small, met) {
   </div>`;
 }
 
+// Progress bars survive a render (they're addressed by id, not rebuilt), so the
+// width they had last time is readable off the element itself. A bar that grew
+// gets a shine along its length — an extra 200 words on a 5,000 target is only
+// a few pixels of width, and a few pixels is not an acknowledgement.
+function setProgress(fill, pct, complete) {
+  const had = fill.dataset.fxPct;
+  const prev = had === undefined ? null : parseFloat(had);
+  fill.dataset.fxPct = String(pct);
+  fill.style.width = pct + '%';
+  const wasComplete = fill.classList.contains('complete');
+  fill.classList.toggle('complete', !!complete);
+  if (prev === null) return;
+  if (complete && !wasComplete) window.Celebrate.pulse(fill, 'fx-done');
+  else if (pct > prev) window.Celebrate.pulse(fill, 'fx-grew');
+}
+
+// The ring is rebuilt each render, so a fresh circle starts life already at its
+// final offset and the CSS transition has nothing to animate. Rewinding it to
+// the previous reading for one frame gives the transition something to do —
+// and it sweeps from where it actually was, not from zero.
+const ringFrom = new Map();
+
+function drawRing(host, pct, big, small, met) {
+  const prev = ringFrom.get(host.id);
+  ringFrom.set(host.id, pct);
+  host.innerHTML = ringHtml(pct, big, small, met);
+  if (prev === undefined || prev === pct || window.Celebrate.reduced() || !window.Celebrate.isEnabled()) return;
+  const fill = host.querySelector('.ring-fill');
+  if (!fill) return;
+  const circumference = parseFloat(fill.getAttribute('stroke-dasharray'));
+  const to = fill.getAttribute('stroke-dashoffset');
+  fill.setAttribute('stroke-dashoffset', (circumference * (1 - Math.max(0, Math.min(100, prev)) / 100)).toFixed(1));
+  // Two frames: one for the browser to accept the rewound value as the start of
+  // the transition, one to change it.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    fill.setAttribute('stroke-dashoffset', to);
+  }));
+}
+
 function targetProgressToday() {
   const t = state.target;
   if (!t) return 0;
@@ -177,8 +394,7 @@ function renderDashboard() {
   const done = targetProgressToday();
   const pct = target ? Math.min(100, Math.round((done / target.amount) * 100)) : 0;
 
-  el('targetProgressFill').style.width = pct + '%';
-  el('targetProgressFill').classList.toggle('complete', !!(target && target.met));
+  setProgress(el('targetProgressFill'), pct, !!(target && target.met));
 
   if (state.isRestDay) {
     el('targetTag').textContent = 'Rest day';
@@ -203,7 +419,7 @@ function renderDashboard() {
     if (target.met) {
       el('targetSub').textContent = "Done. Streak's safe today.";
     } else if (target.type === 'plan') {
-      el('targetSub').textContent = 'No word count today — just figure out what happens next, then log it as planned.';
+      el('targetSub').textContent = 'No word count today — figure out what happens next. Say whether a whole chapter came out of it; if not, the book stays in planning.';
     } else if (target.type === 'write') {
       el('targetSub').textContent = `${fmt(Math.max(0, target.amount - done))} words to go. Word count is whatever your writing tool reports.`;
     } else {
@@ -238,9 +454,9 @@ function renderDashboard() {
   // Ring
   if (target && !state.isRestDay) {
     const big = target.type === 'plan' ? (target.met ? '✓' : '—') : pct + '%';
-    el('heroRing').innerHTML = ringHtml(target.met ? 100 : pct, big, target.type === 'plan' ? 'plan' : 'of target', target.met);
+    drawRing(el('heroRing'), target.met ? 100 : pct, big, target.type === 'plan' ? 'plan' : 'of target', target.met);
   } else {
-    el('heroRing').innerHTML = ringHtml(state.isRestDay ? 100 : 0, state.isRestDay ? '☁' : '—', state.isRestDay ? 'resting' : 'idle', false);
+    drawRing(el('heroRing'), state.isRestDay ? 100 : 0, state.isRestDay ? '☁' : '—', state.isRestDay ? 'resting' : 'idle', false);
   }
 
   renderQuickAdd(target, done);
@@ -271,6 +487,7 @@ function renderDashboard() {
     metricCard('Word level', fmt(state.wordTarget.current), `cap ${fmt(state.wordTarget.cap)}`),
     metricCard('Consistency', st.consistency + '%', 'targets met, 10 weeks', st.consistency >= 70 ? 'good' : '')
   ].join('');
+  animateMetrics(el('metricRow'));
 
   // Mini chart, last 14 days. All-zero days render as 3px slivers, which reads as
   // a broken chart rather than an empty one — say so instead.
@@ -309,12 +526,40 @@ function renderDashboard() {
   });
 }
 
+// Metric rows are rebuilt with innerHTML, so a card can't hold its own previous
+// value across a render. The figure is parsed back out of whatever the caller
+// formatted — "12,480" or "87%" — and animateMetrics() supplies the value it
+// had last time from a map that does survive. Anything unparseable ("—") is
+// written straight in.
 function metricCard(label, value, sub, valueClass = '') {
+  const text = String(value);
+  const m = /^(-?[\d,]+)(\D*)$/.exec(text);
+  const attrs = m
+    ? ` data-metric="${escapeHtml(label)}" data-num="${m[1].replace(/,/g, '')}" data-suffix="${escapeHtml(m[2])}"`
+    : '';
   return `<div class="metric-card">
     <div class="metric-label">${escapeHtml(label)}</div>
-    <div class="metric-value ${valueClass}">${value}</div>
+    <div class="metric-value ${valueClass}"${attrs}>${text}</div>
     <div class="metric-sub">${escapeHtml(sub)}</div>
   </div>`;
+}
+
+const metricPrev = new Map();
+
+function animateMetrics(container) {
+  container.querySelectorAll('.metric-value[data-metric]').forEach(node => {
+    // Namespaced by row: "Best day" means different things in two of them, and
+    // an unqualified key would have them animating from each other's numbers.
+    const key = container.id + ':' + node.dataset.metric;
+    const to = parseFloat(node.dataset.num);
+    const suffix = node.dataset.suffix || '';
+    const prev = metricPrev.get(key);
+    metricPrev.set(key, to);
+    if (prev === undefined || !Number.isFinite(to)) return;
+    node.dataset.fxVal = String(prev);
+    window.Celebrate.countUp(node, to, { format: (n) => Math.round(n).toLocaleString() + suffix });
+    if (prev !== to) window.Celebrate.pulse(node);
+  });
 }
 
 // Hitting the target doesn't mean you stopped working — this opens the full log
@@ -338,7 +583,12 @@ function quickAddChips(task, done) {
     if (remaining > 1) chips.push({ label: `+${remaining} (finish)`, amount: remaining });
     return chips;
   }
-  return [{ label: 'Mark chapter planned', amount: 1 }];
+  // Both outcomes of a planning day, one click each. Only the first sends the
+  // book back to writing.
+  return [
+    { label: 'Chapter planned', amount: 1 },
+    { label: 'Planned, no chapter yet', amount: 1, planned: false }
+  ];
 }
 
 function renderQuickAdd(target, done) {
@@ -349,12 +599,12 @@ function renderQuickAdd(target, done) {
     return;
   }
   const chips = quickAddChips(target, done)
-    .map(c => `<button class="chip" data-amount="${c.amount}">${escapeHtml(c.label)}</button>`);
+    .map(c => `<button class="chip" data-amount="${c.amount}" data-planned="${c.planned === false ? '0' : '1'}">${escapeHtml(c.label)}</button>`);
   chips.push(`<button class="chip extra" data-extra="1">${escapeHtml(extraChipLabel(target.type))}</button>`);
   row.innerHTML = chips.join('');
   row.classList.remove('hidden');
   row.querySelectorAll('[data-amount]').forEach(btn => {
-    btn.addEventListener('click', () => quickLog(parseInt(btn.dataset.amount, 10)));
+    btn.addEventListener('click', () => quickLog(parseInt(btn.dataset.amount, 10), btn.dataset.planned !== '0'));
   });
   const extra = row.querySelector('[data-extra]');
   if (extra) extra.addEventListener('click', () => openLogModal(target.bookId, target.type, true));
@@ -389,30 +639,29 @@ function renderBonus() {
   el('bonusFree').textContent = cleared
     ? `${cleared} cleared today · the next one is still optional`
     : 'Optional — skipping it costs you nothing';
-  el('bonusProgressFill').style.width = pct + '%';
-  el('bonusProgressFill').classList.toggle('complete', !!bonus.met);
+  setProgress(el('bonusProgressFill'), pct, !!bonus.met);
   el('bonusProgressCaption').textContent = bonus.type === 'plan'
     ? (bonus.met ? 'Planned' : 'One chapter outline')
     : `${fmt(done)} / ${fmt(bonus.amount)}`;
 
   const row = el('bonusQuickAdd');
   const chips = quickAddChips(bonus, done)
-    .map(c => `<button class="chip" data-bonus-amount="${c.amount}">${escapeHtml(c.label)}</button>`);
+    .map(c => `<button class="chip" data-bonus-amount="${c.amount}" data-planned="${c.planned === false ? '0' : '1'}">${escapeHtml(c.label)}</button>`);
   chips.push(`<button class="chip extra" data-extra="1">${escapeHtml(extraChipLabel(bonus.type))}</button>`);
   row.innerHTML = chips.join('');
   row.classList.remove('hidden');
   row.querySelectorAll('[data-bonus-amount]').forEach(btn => {
-    btn.addEventListener('click', () => quickLogBonus(parseInt(btn.dataset.bonusAmount, 10)));
+    btn.addEventListener('click', () => quickLogBonus(parseInt(btn.dataset.bonusAmount, 10), btn.dataset.planned !== '0'));
   });
   const extra = row.querySelector('[data-extra]');
   if (extra) extra.addEventListener('click', () => openLogModal(bonus.bookId, bonus.type, true));
 }
 
-async function quickLogBonus(amount) {
+async function quickLogBonus(amount, chapterPlanned = true) {
   const bonus = state.bonus;
   if (!bonus) return;
   const clearedBefore = state.bonusCleared || 0;
-  state = await window.api.logProgress({ bookId: bonus.bookId, type: bonus.type, amount, note: '', chapterComplete: false });
+  state = await window.api.logProgress({ bookId: bonus.bookId, type: bonus.type, amount, note: '', chapterComplete: false, chapterPlanned });
   render();
   if ((state.bonusCleared || 0) > clearedBefore) {
     toast(state.bonus && !state.bonus.met
@@ -423,18 +672,19 @@ async function quickLogBonus(amount) {
   }
 }
 
-async function quickLog(amount) {
+async function quickLog(amount, chapterPlanned = true) {
   const target = state.target;
   if (!target) return;
-  state = await window.api.logProgress({ bookId: target.bookId, type: target.type, amount, note: '', chapterComplete: false });
+  state = await window.api.logProgress({ bookId: target.bookId, type: target.type, amount, note: '', chapterComplete: false, chapterPlanned });
   render();
   if (state.target && state.target.met) toast("Target met. Streak's safe today.", 'good');
+  else if (target.type === 'plan') toast('Planning logged.', 'good');
   else toast(`Logged ${target.type === 'write' ? fmt(amount) + ' words' : amount + ' chapter(s)'}.`, 'good');
 }
 
 function logVerb(l) {
   if (l.type === 'write') return `+${fmt(l.amount)} words`;
-  if (l.type === 'plan') return 'Chapter planned';
+  if (l.type === 'plan') return l.chapterPlanned === false ? 'Planning notes' : 'Chapter planned';
   return `${l.amount} chapter${l.amount === 1 ? '' : 's'} edited`;
 }
 
@@ -507,7 +757,9 @@ function bookProgress(b) {
 
 function bookMeta(b) {
   if (b.stage === 'planning') {
-    let meta = `Waiting to be planned &middot; no word count while it's here`;
+    let meta = b.autoPlanning
+      ? `Every planned chapter is written &middot; plan the next one`
+      : `Waiting to be planned &middot; no word count while it's here`;
     if (b.chaptersPlanned) meta += ` &middot; ${b.chaptersPlanned} planned`;
     return meta;
   }
@@ -566,7 +818,7 @@ function bookCardHtml(b) {
   const progress = pct == null ? '' : `<div class="card-progress" title="${pct}%"><i style="width:${pct}%"></i></div>`;
 
   return `
-    <div class="book-card ${isTarget ? 'is-target' : ''} ${b.paused ? 'is-paused' : ''}">
+    <div class="book-card ${isTarget ? 'is-target' : ''} ${b.paused ? 'is-paused' : ''}" data-id="${b.id}">
       ${cover}
       <button class="card-kebab" data-menu="${b.id}" title="More actions" aria-label="More actions">&#8942;</button>
       <div class="card-body">
@@ -651,9 +903,22 @@ async function onBookAction(action, id) {
     render();
     toast(`"${book.title}" moved to Editing.`, 'good');
   } else if (action === 'needsPlanning') {
-    state = await window.api.needsPlanning(id);
+    if (!(await confirmNeedsPlanning(book))) return;
+    const res = await window.api.needsPlanning(id);
+    state = res.state;
     render();
-    toast('Flagged for planning — no word counts until you plan a chapter.');
+    // A reroll was spent, so show what it bought — same reel as rerolling by hand.
+    if (res.targetChanged && state.target) {
+      el('spinnerTitle').textContent = res.banked ? 'Spending a banked reroll' : "Spending today's reroll";
+      el('spinnerHint').textContent = '"' + book.title + '" is off to planning. Here is the day instead.';
+      const done = el('spinnerDoneBtn');
+      done.disabled = true;
+      done.textContent = 'Rolling...';
+      openModal('spinnerModalBackdrop');
+      runReel(state.target, () => { done.disabled = false; done.textContent = 'Take it'; });
+    } else {
+      toast(res.message, res.ok ? 'good' : 'bad');
+    }
   } else if (action === 'cancelPlanning') {
     state = await window.api.cancelPlanning(id);
     render();
@@ -709,6 +974,7 @@ function renderStats() {
     metricCard('Books done', st.booksDone, `${state.books.length} total`),
     metricCard('Chapters edited', fmt(st.totalChapters), `${st.totalPlans} chapters planned`)
   ].join('');
+  animateMetrics(el('statMetrics'));
 
   const days = st.history.slice(-30);
   const max = Math.max(1, ...days.map(d => d.words));
@@ -742,6 +1008,58 @@ function renderStats() {
     ['Rest days taken', `${st.restDaysTaken} (10 weeks)`],
     ['Log entries', fmt(st.totalLogs)]
   ].map(([k, v]) => `<div class="record-row"><span class="rk">${k}</span><span class="rv">${v}</span></div>`).join('');
+
+  renderBonusStats();
+}
+
+// Bonus rounds were the one part of the app that kept no visible score. They're
+// the only work here nothing is making you do, which makes them the most worth
+// counting — and the credits they pay were impossible to reconcile against them
+// from the dashboard's two little progress tracks alone.
+function renderBonusStats() {
+  const b = state.stats.bonus;
+  const enabled = state.settings.bonusTasksEnabled;
+
+  el('bonusStatNote').textContent = !enabled
+    ? 'Switched off in Settings'
+    : (b.offeredToday ? `${b.clearedToday} of ${b.offeredToday} cleared today` : 'none offered yet today');
+
+  el('bonusMetrics').innerHTML = [
+    metricCard('Rounds cleared', fmt(b.cleared), b.offered ? `of ${fmt(b.offered)} offered` : 'none offered yet', 'accent'),
+    metricCard('Clear rate', b.clearRate + '%', 'of rounds finished', b.clearRate >= 50 ? 'good' : ''),
+    metricCard('Cleared this month', fmt(b.clearedThisMonth), `${b.toNextPick} more for a pick`),
+    metricCard('Best day', fmt(b.bestDay.count), b.bestDay.date ? `rounds · ${prettyDate(b.bestDay.date)}` : 'nothing yet')
+  ].join('');
+  animateMetrics(el('bonusMetrics'));
+
+  const months = b.monthly;
+  const peak = Math.max(1, ...months.map(m => m.cleared));
+  const thisMonth = state.today.slice(0, 7);
+  el('bonusMonthChart').innerHTML = months.map((m, i) => {
+    const h = m.cleared ? Math.max(6, Math.round((m.cleared / peak) * 100)) : 0;
+    const current = m.month === thisMonth;
+    return `<div class="mc-col ${current ? 'current' : ''}" title="${escapeHtml(m.month)} — ${m.cleared} cleared">
+      <span class="mc-val ${m.cleared ? '' : 'zero'}">${m.cleared}</span>
+      <div class="mc-bar-wrap">
+        <div class="mc-bar ${m.cleared ? '' : 'zero'} ${current ? 'current' : ''}"
+             style="height:${m.cleared ? h : 3}%;animation-delay:${i * 45}ms"></div>
+      </div>
+      <span class="mc-label">${escapeHtml(m.label)}</span>
+    </div>`;
+  }).join('');
+
+  const ledger = (earned, spent, left) =>
+    `${fmt(left)} left <span class="rv-dim">· ${fmt(earned)} earned, ${fmt(spent)} spent</span>`;
+
+  el('bonusLedger').innerHTML = [
+    ['Rerolls banked', ledger(b.rerollsEarned, b.rerollsSpent, b.rerollsLeft)],
+    ['Next reroll in', `${b.toNextReroll} round${b.toNextReroll === 1 ? '' : 's'}`],
+    ['Project picks', ledger(b.picksEarned, b.picksSpent, b.picksLeft)],
+    ['Next pick in', `${b.toNextPick} round${b.toNextPick === 1 ? '' : 's'} this month`],
+    ['Days with a round cleared', fmt(b.daysCleared)],
+    ['Average on those days', b.avgPerActiveDay ? `${b.avgPerActiveDay} rounds` : '—'],
+    ['Earning rate', `1 reroll / ${b.perReroll} rounds · 1 pick / ${b.perPick} a month`]
+  ].map(([k, v]) => `<div class="record-row"><span class="rk">${k}</span><span class="rv">${v}</span></div>`).join('');
 }
 
 // ---------------- History ----------------
@@ -757,14 +1075,17 @@ function renderHeatmap() {
   days.forEach(d => cells.push(d));
   while (cells.length % 7 !== 0) cells.push(null);
 
-  el('heatmap').innerHTML = cells.map(d => {
-    if (!d) return `<div class="heat-cell future"></div>`;
+  el('heatmap').innerHTML = cells.map((d, i) => {
+    // Column-by-column rather than cell-by-cell: 70 individually delayed cells
+    // reads as noise, ten weeks sweeping left to right reads as a calendar.
+    const delay = `animation-delay:${Math.floor(i / 7) * 26}ms`;
+    if (!d) return `<div class="heat-cell future" style="${delay}"></div>`;
     const bits = [];
     if (d.target) bits.push(`${d.target.type} ${fmt(d.target.amount)}`);
     if (d.words) bits.push(`${fmt(d.words)} words`);
     if (d.chapters) bits.push(`${d.chapters} chapter(s)`);
     const label = `${prettyDate(d.date)} — ${d.status}${bits.length ? ' — ' + bits.join(', ') : ''}`;
-    return `<div class="heat-cell ${d.status}${d.date === state.today ? ' today' : ''}" title="${escapeHtml(label)}"></div>`;
+    return `<div class="heat-cell ${d.status}${d.date === state.today ? ' today' : ''}" title="${escapeHtml(label)}" style="${delay}"></div>`;
   }).join('');
 
   // Month labels sit above the week columns they start in.
@@ -866,7 +1187,9 @@ function detailsChapterFieldConfig(book) {
 // Words only mean anything while there's still drafting to do — once a book is
 // edited-and-done its total is history, but it's still worth showing.
 function detailsTracksWords(book) {
-  return book.stage !== 'planning';
+  // A book auto-moved into planning still has today's word target live against
+  // it, so its word count is very much still in play.
+  return book.stage !== 'planning' || !!book.autoPlanning;
 }
 
 // Live preview of the word-goal bar so you can see what you're typing do
@@ -988,6 +1311,361 @@ el('detailsSaveBtn').addEventListener('click', async () => {
   toast('Details saved.', 'good');
 });
 
+// Moving today's own book to planning invalidates the day's word target, and the
+// app would hand out a replacement for free — which makes it a way to dodge any
+// target you don't fancy. It costs a reroll instead, and that has to be said out
+// loud before it's spent, not after.
+async function confirmNeedsPlanning(book) {
+  const t = state.target;
+  const costs = t && !t.met && t.type === 'write' && t.bookId === book.id;
+  if (!costs) return true;
+
+  const done = state.todaysLogs
+    .filter(l => l.bookId === t.bookId && l.type === 'write')
+    .reduce((a, l) => a + l.amount, 0);
+
+  if (state.rerollsLeft > 0) {
+    const banked = state.rewards && state.rewards.freeRerollsLeft <= 0;
+    let body = 'Today\u2019s mission is this book, so moving it to planning rolls a new one — and that costs ' +
+      (banked ? 'a banked reroll' : 'today\u2019s reroll') + '. You\u2019d have ' + (state.rerollsLeft - 1) + ' left.';
+    if (done > 0) body += ' The ' + fmt(done) + ' words you already logged stay on the book, but stop counting toward today.';
+    return confirmDialog({
+      title: 'Spend a reroll to move this book?',
+      body,
+      okLabel: 'Spend it',
+      danger: false
+    });
+  }
+
+  return confirmDialog({
+    title: 'Move it anyway, without a new mission?',
+    body: 'Today\u2019s mission is this book and you have no rerolls left, so it stays as it is. ' +
+      'The book moves to planning either way — today just still wants its words.',
+    okLabel: 'Move it anyway',
+    danger: false
+  });
+}
+
+// ---------------- Bonus rewards ----------------
+// Bonus rounds used to pay nothing at all. They now buy two things, and both are
+// spent on the same axis they were earned on: control over what the app asks of
+// you. Neither can ever become an obligation — skip every round and you lose
+// only what you never had.
+
+function eligibleBooks() {
+  return state.books.filter(b => !b.paused && (
+    b.stage === 'writing' || b.stage === 'planning' ||
+    (b.stage === 'editing' && b.id === state.activeEditingBookId)
+  ));
+}
+
+function renderRewards() {
+  const r = state.rewards;
+  const strip = el('rewardStrip');
+  if (!r || !state.settings.bonusTasksEnabled) { strip.classList.add('hidden'); return; }
+  strip.classList.remove('hidden');
+
+  window.Celebrate.countUp(el('rewardRerollCount'), r.rerollCredits, { format: (n) => String(Math.round(n)) });
+  el('rewardRerollFill').style.width =
+    Math.round(((r.perReroll - r.toNextReroll) / r.perReroll) * 100) + '%';
+  // A track one round away from paying out breathes, so you can see it coming.
+  el('rewardRerollFill').classList.toggle('fx-charging', r.toNextReroll === 1);
+  el('rewardRerollSub').textContent = r.toNextReroll === 1
+    ? 'One more round earns another'
+    : r.toNextReroll + ' more rounds earn another';
+  el('rewardRerollSlot').classList.toggle('has-credit', r.rerollCredits > 0);
+
+  window.Celebrate.countUp(el('rewardPickCount'), r.projectPicks, { format: (n) => String(Math.round(n)) });
+  el('rewardPickFill').style.width =
+    Math.round(((r.clearedThisMonth % r.perPick) / r.perPick) * 100) + '%';
+  el('rewardPickFill').classList.toggle('fx-charging', r.toNextPick <= 2);
+  el('rewardPickSlot').classList.toggle('has-credit', r.projectPicks > 0);
+  el('pickProjectBtn').classList.toggle('hidden', r.projectPicks <= 0);
+
+  el('rewardPickSub').textContent = r.nextPick
+    ? 'Tomorrow is locked to "' + r.nextPick.title + '"'
+    : (r.clearedThisMonth % r.perPick) + ' of ' + r.perPick + ' rounds this month · ' + r.toNextPick + ' to go';
+}
+
+// ---- the reroll spinner ----
+// The result is already decided by the time the reel starts moving — the store
+// rolled it the moment you clicked. The spin isn't deciding anything, it's just
+// refusing to hand you the answer instantly, which is the whole point of it.
+const REEL_ROW_H = 54;
+const REEL_LENGTH = 30;
+const REEL_LAND = 26;
+
+function reelRowHtml(label, stage) {
+  return '<div class="reel-row"><span class="reel-spine ' + stage + '"></span>' +
+    '<span class="reel-label">' + escapeHtml(label) + '</span></div>';
+}
+
+// Plausible-looking filler: real books, real-shaped tasks, none of it binding.
+function fakeReelRow() {
+  const books = eligibleBooks();
+  const book = books[Math.floor(Math.random() * books.length)];
+  if (!book) return reelRowHtml('...', 'writing');
+  if (book.stage === 'editing') {
+    return reelRowHtml('Edit ' + (1 + Math.floor(Math.random() * 2)) + ' chapter(s) of "' + book.title + '"', book.stage);
+  }
+  if (book.stage === 'planning' || Math.random() < 0.2) {
+    return reelRowHtml('Plan your next chapter of "' + book.title + '"', book.stage);
+  }
+  const base = state.wordTarget ? state.wordTarget.current : 500;
+  const jitter = Math.round((base * (0.7 + Math.random() * 0.6)) / 50) * 50;
+  return reelRowHtml('Write ' + fmt(jitter) + ' words of "' + book.title + '"', book.stage);
+}
+
+function realTargetRow(target) {
+  const book = state.books.find(b => b.id === target.bookId);
+  const title = book ? book.title : 'your book';
+  const stage = book ? book.stage : 'writing';
+  if (target.type === 'plan') return reelRowHtml('Plan your next chapter of "' + title + '"', stage);
+  const verb = target.type === 'write' ? 'Write' : 'Edit';
+  const unit = target.type === 'write' ? 'words' : (target.amount === 1 ? 'chapter' : 'chapters');
+  return reelRowHtml(verb + ' ' + fmt(target.amount) + ' ' + unit + ' of "' + title + '"', stage);
+}
+
+function runReel(target, onDone) {
+  const strip = el('reelStrip');
+  const rows = [];
+  for (let i = 0; i < REEL_LENGTH; i++) {
+    rows.push(i === REEL_LAND ? realTargetRow(target) : fakeReelRow());
+  }
+  strip.innerHTML = rows.join('');
+  strip.classList.add('spinning');
+  strip.style.transition = 'none';
+  strip.style.transform = 'translateY(0)';
+  // Force the reset to take effect before the transition is attached, or the
+  // browser collapses both writes into one and nothing moves.
+  void strip.offsetHeight;
+  strip.style.transition = 'transform 3.1s cubic-bezier(.08,.62,.16,1)';
+  strip.style.transform = 'translateY(' + (-(REEL_LAND - 1) * REEL_ROW_H) + 'px)';
+
+  const settle = () => {
+    strip.removeEventListener('transitionend', settle);
+    strip.classList.remove('spinning');
+    strip.children[REEL_LAND].classList.add('landed');
+    // Sparks off the winning row rather than confetti: the reel is the payoff
+    // for a reroll you spent, not a win to be congratulated on.
+    window.Celebrate.sparkle(strip.children[REEL_LAND], 16);
+    window.Celebrate.shockwave(el('reelStrip').parentElement);
+    onDone();
+  };
+  strip.addEventListener('transitionend', settle);
+}
+
+let spinnerBusy = false;
+
+async function rerollWithSpinner() {
+  if (spinnerBusy || !state.canReroll) return;
+  spinnerBusy = true;
+  const res = await window.api.rerollTarget();
+  if (!res.ok) {
+    spinnerBusy = false;
+    toast(res.message, 'bad');
+    return;
+  }
+  state = res.state;
+  render();
+
+  el('spinnerTitle').textContent = res.banked ? 'Spending a banked reroll' : 'Rolling a new mission';
+  el('spinnerHint').textContent = res.banked
+    ? 'Bought with bonus rounds. Wherever it lands, that is the day.'
+    : 'Wherever it lands, that is the day.';
+  const done = el('spinnerDoneBtn');
+  done.disabled = true;
+  done.textContent = 'Rolling...';
+  openModal('spinnerModalBackdrop');
+
+  runReel(state.target, () => {
+    done.disabled = false;
+    done.textContent = 'Take it';
+    spinnerBusy = false;
+  });
+}
+
+el('spinnerDoneBtn').addEventListener('click', () => {
+  if (spinnerBusy) return;
+  closeModal('spinnerModalBackdrop');
+  toast('New target locked in. No takebacks.', 'good');
+});
+
+// ---- the project pick ----
+function pickCardHtml(b) {
+  const cover = b.coverPath
+    ? '<img class="pick-cover" src="' + coverUrl(b) + '" alt="" />'
+    : '<div class="pick-cover blank ' + b.stage + '"><span>' + escapeHtml(b.title.charAt(0).toUpperCase()) + '</span></div>';
+  return '<button class="pick-card" data-pick="' + b.id + '">' +
+    cover +
+    '<span class="pick-stage ' + b.stage + '">' + STAGE_LABEL[b.stage] + '</span>' +
+    '<span class="pick-name">' + escapeHtml(b.title) + '</span>' +
+    '</button>';
+}
+
+let pickBusy = false;
+
+function openPickModal() {
+  const books = eligibleBooks();
+  if (!books.length) { toast('No books in the rotation to choose from.', 'bad'); return; }
+  pickBusy = false;
+  el('pickHint').textContent = state.rewards.clearedThisMonth +
+    " bonus rounds cleared this month. Tomorrow's mission is yours to name.";
+  const deck = el('pickDeck');
+  deck.classList.remove('resolved');
+  deck.innerHTML = books.map(pickCardHtml).join('');
+  // Staggered so the cards land one after another instead of all at once.
+  [...deck.children].forEach((card, i) => { card.style.animationDelay = (i * 80) + 'ms'; });
+  openModal('pickModalBackdrop');
+}
+
+el('pickDeck').addEventListener('click', async (e) => {
+  const card = e.target.closest('[data-pick]');
+  if (!card || pickBusy) return;
+  pickBusy = true;
+  const deck = el('pickDeck');
+  deck.classList.add('resolved');
+  card.classList.add('chosen');
+  window.Celebrate.fromElement(card, { count: 34, spread: 170, power: 620, tone: 'gold' });
+
+  const res = await window.api.pickTomorrow(card.dataset.pick);
+  // Let the chosen card finish its flourish before the modal goes.
+  setTimeout(() => {
+    state = res.state;
+    closeModal('pickModalBackdrop');
+    deck.classList.remove('resolved');
+    render();
+    toast(res.message, res.ok ? 'good' : 'bad');
+    pickBusy = false;
+  }, 620);
+});
+
+el('pickProjectBtn').addEventListener('click', openPickModal);
+
+// ---------------- Distraction app picker ----------------
+// Nobody should have to know that Brave's process is brave.exe, or go hunting
+// through Task Manager for it. The list is scanned off the machine; the writer
+// just ticks what distracts them. The manual field stays for the odd game whose
+// executable is buried and has no Start Menu entry (VALORANT, for one).
+
+let appCatalog = null;          // null while the scan is still running
+let appScanError = null;
+const selectedApps = new Map(); // lowercase exe -> exe exactly as it will be saved
+const extraApps = new Map();    // lowercase exe -> apps not found by the scan, kept visible anyway
+
+function loadAppPicker(saved) {
+  selectedApps.clear();
+  extraApps.clear();
+  (saved || []).forEach(exe => selectedApps.set(exe.toLowerCase(), exe));
+  syncExtraApps();
+  renderAppList();
+  if (appCatalog === null && !appScanError) scanApps();
+}
+
+// Anything selected that the scan didn't turn up — a hand-typed entry, or an app
+// uninstalled since — still needs a row, or unticking it would be impossible.
+function syncExtraApps() {
+  if (appCatalog === null) return; // mid-scan: everything would look unknown
+  const known = new Set(appCatalog.map(a => a.exe.toLowerCase()));
+  selectedApps.forEach((exe, key) => {
+    if (!known.has(key) && !extraApps.has(key)) extraApps.set(key, { exe, name: exe, custom: true });
+  });
+  // A rescan can turn a hand-typed entry into a properly named one — drop the
+  // bare-exe row rather than showing the same app twice.
+  extraApps.forEach((_, key) => { if (known.has(key)) extraApps.delete(key); });
+}
+
+async function scanApps() {
+  appCatalog = null;
+  appScanError = null;
+  renderAppList();
+  const res = await window.api.listApps();
+  appCatalog = res.apps || [];
+  appScanError = res.ok ? null : (res.error || 'Could not read the list of installed apps.');
+  syncExtraApps();
+  renderAppList();
+}
+
+function appPickerRows() {
+  const rows = [...extraApps.values(), ...(appCatalog || [])];
+  const q = el('appSearch').value.trim().toLowerCase();
+  const filtered = q
+    ? rows.filter(a => a.name.toLowerCase().includes(q) || a.exe.toLowerCase().includes(q))
+    : rows;
+  // Custom entries first (they're the ones you had to work for), then by name.
+  return filtered.sort((a, b) => (b.custom ? 1 : 0) - (a.custom ? 1 : 0) ||
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+
+function renderAppList() {
+  const list = el('appList');
+  el('appPickerCount').textContent = selectedApps.size ? `${selectedApps.size} selected` : 'none selected';
+
+  if (appCatalog === null) {
+    list.innerHTML = `<div class="app-empty">Looking through your installed apps…</div>`;
+    return;
+  }
+
+  const rows = appPickerRows();
+  const notice = appScanError ? `<div class="app-empty warn">${escapeHtml(appScanError)} You can still add apps by hand below.</div>` : '';
+  if (!rows.length) {
+    list.innerHTML = notice || `<div class="app-empty">Nothing matches that search.</div>`;
+    return;
+  }
+
+  list.innerHTML = notice + rows.map(a => {
+    const key = a.exe.toLowerCase();
+    // No icon for hand-typed entries and the odd exe Windows has none for —
+    // a monogram keeps the row from collapsing a column narrower than the rest.
+    const icon = a.icon
+      ? `<img class="app-icon" src="${a.icon}" alt="" />`
+      : `<span class="app-icon blank">${escapeHtml(a.name.charAt(0).toUpperCase())}</span>`;
+    return `<label class="app-row${selectedApps.has(key) ? ' picked' : ''}" data-exe="${escapeHtml(a.exe)}">
+      <input type="checkbox" ${selectedApps.has(key) ? 'checked' : ''} />
+      ${icon}
+      <span class="app-name">${escapeHtml(a.name)}</span>
+      ${a.custom ? '' : `<span class="app-exe">${escapeHtml(a.exe)}</span>`}
+      ${a.custom ? '<span class="app-flag custom">added by hand</span>' : a.running ? '<span class="app-flag">running</span>' : ''}
+    </label>`;
+  }).join('');
+}
+
+// Delegated so ticking a box never re-renders the list — rows jumping around
+// under the cursor while you work down a list of sixty apps is miserable.
+el('appList').addEventListener('change', (e) => {
+  const row = e.target.closest('.app-row');
+  if (!row) return;
+  const exe = row.dataset.exe;
+  const key = exe.toLowerCase();
+  if (e.target.checked) selectedApps.set(key, exe);
+  else selectedApps.delete(key);
+  row.classList.toggle('picked', e.target.checked);
+  el('appPickerCount').textContent = selectedApps.size ? `${selectedApps.size} selected` : 'none selected';
+});
+
+el('appSearch').addEventListener('input', renderAppList);
+el('rescanAppsBtn').addEventListener('click', () => scanApps());
+
+function addAppByHand() {
+  const input = el('appManualInput');
+  let exe = input.value.trim();
+  if (!exe) return;
+  if (!/\.exe$/i.test(exe)) exe += '.exe';
+  const key = exe.toLowerCase();
+  selectedApps.set(key, exe);
+  if (!(appCatalog || []).some(a => a.exe.toLowerCase() === key)) {
+    extraApps.set(key, { exe, name: exe, custom: true });
+  }
+  input.value = '';
+  el('appSearch').value = '';
+  renderAppList();
+}
+
+el('appManualAddBtn').addEventListener('click', addAppByHand);
+el('appManualInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); addAppByHand(); }
+});
+
 // ---------------- Settings ----------------
 function renderSettings() {
   const s = state.settings;
@@ -998,7 +1676,7 @@ function renderSettings() {
   el('setEndHour').value = s.punishmentEndHour;
   el('setInterval').value = s.checkIntervalMinutes;
   el('setSnoozeThreshold').value = s.snoozeThreshold;
-  el('setDistractions').value = s.distractionProcesses.join(', ');
+  loadAppPicker(s.distractionProcesses);
   el('setStartWords').value = s.startWords;
   el('setWordIncrement').value = s.wordIncrement;
   el('setWordCap').value = s.wordCap;
@@ -1008,6 +1686,7 @@ function renderSettings() {
   el('setRestDaysPerWeek').value = s.restDaysPerWeek;
   el('setRerollsPerDay').value = s.rerollsPerDay;
   el('setBonusEnabled').checked = s.bonusTasksEnabled;
+  el('setCelebrations').checked = s.celebrations !== false;
   el('setAutoLaunch').checked = s.autoLaunch;
 }
 
@@ -1031,7 +1710,7 @@ el('saveSettingsBtn').addEventListener('click', async () => {
     punishmentEndHour: parseInt(el('setEndHour').value, 10),
     checkIntervalMinutes: parseInt(el('setInterval').value, 10),
     snoozeThreshold: parseInt(el('setSnoozeThreshold').value, 10),
-    distractionProcesses: el('setDistractions').value.split(',').map(s => s.trim()).filter(Boolean),
+    distractionProcesses: Array.from(selectedApps.values()),
     startWords: parseInt(el('setStartWords').value, 10),
     wordIncrement: parseInt(el('setWordIncrement').value, 10),
     wordCap: parseInt(el('setWordCap').value, 10),
@@ -1041,12 +1720,37 @@ el('saveSettingsBtn').addEventListener('click', async () => {
     restDaysPerWeek: Math.max(0, parseInt(el('setRestDaysPerWeek').value, 10) || 0),
     rerollsPerDay: Math.max(0, parseInt(el('setRerollsPerDay').value, 10) || 0),
     bonusTasksEnabled: el('setBonusEnabled').checked,
+    celebrations: el('setCelebrations').checked,
     autoLaunch: el('setAutoLaunch').checked
   };
   state = await window.api.updateSettings(partial);
   applyAppearance(state.settings);
   render();
   toast('Settings saved.', 'good');
+});
+
+// The toggle previews live off the checkbox rather than waiting for a save —
+// deciding whether you want confetti is easier with confetti in front of you.
+el('setCelebrations').addEventListener('change', (e) => {
+  window.Celebrate.setEnabled(e.target.checked);
+  if (e.target.checked) window.Celebrate.confetti({ count: 34, y: window.innerHeight * 0.6 });
+});
+
+el('previewCelebrationBtn').addEventListener('click', () => {
+  if (!el('setCelebrations').checked) {
+    toast('Celebrations are switched off — tick the box to see one.', 'bad');
+    return;
+  }
+  window.Celebrate.setEnabled(true);
+  if (window.Celebrate.reduced()) {
+    toast("Windows is set to minimise animations, so this stays still. The banner is all you'll get.", '', 5000);
+  }
+  window.Celebrate.party({
+    tier: 3, tone: 'green', icon: '✓',
+    title: 'Target cleared',
+    subtitle: 'This is what a finished day looks like.',
+    duration: 3000
+  });
 });
 
 el('exportDataBtn').addEventListener('click', async () => {
@@ -1063,40 +1767,83 @@ el('restDayBtn').addEventListener('click', async () => {
   toast(res.message, res.ok ? 'good' : 'bad');
 });
 
-el('rerollBtn').addEventListener('click', async () => {
-  if (!state.canReroll) return;
-  const res = await window.api.rerollTarget();
-  state = res.state;
-  render();
-  toast(res.message, res.ok ? 'good' : 'bad');
-});
+el('rerollBtn').addEventListener('click', rerollWithSpinner);
 
 // ---------------- Log modal ----------------
 // `extra` is the "I wrote extra..." entry point from a task card: same form, but
 // it says what it's for, since the task it belongs to is already finished.
+// What the app is actually waiting on right now. Once the day's target is met
+// the mission is over and a bonus round has taken its place, so a bare "log
+// progress" — the dashboard button, Ctrl+L, the tray item, or Ctrl+Alt+W from
+// anywhere — should land on the round that's still open rather than on the task
+// you already finished. Falls back to the finished target so an over-target
+// session still opens on the book you were working in.
+function openTaskNow() {
+  if (state.isRestDay) return null;
+  const target = state.target;
+  if (target && !target.met) return { task: target, kind: 'target' };
+  const bonus = state.bonus;
+  if (bonus && !bonus.met) return { task: bonus, kind: 'bonus' };
+  if (target) return { task: target, kind: 'done' };
+  return null;
+}
+
 function openLogModal(presetBookId, presetType, extra = false) {
   const options = state.books.filter(b => b.stage !== 'done');
   if (!options.length) { toast('Add a book first.', 'bad'); switchView('books'); return; }
   el('logBookSelect').innerHTML = options.map(b => `<option value="${b.id}">${escapeHtml(b.title)}</option>`).join('');
 
+  let kind = null;
   if (presetBookId && options.some(b => b.id === presetBookId)) {
     el('logBookSelect').value = presetBookId;
     el('logTypeSelect').value = presetType || 'write';
-  } else if (state.target && options.some(b => b.id === state.target.bookId)) {
-    // Trust today's actual assigned type as-is (a writing book may have randomly
-    // gotten a planning day) rather than re-deriving it from the book's stage.
-    el('logBookSelect').value = state.target.bookId;
-    el('logTypeSelect').value = state.target.type;
   } else {
-    syncLogTypeToStage();
+    const open = openTaskNow();
+    // Trust the task's actual assigned type as-is (a writing book may have
+    // randomly gotten a planning day) rather than re-deriving it from the
+    // book's stage.
+    if (open && options.some(b => b.id === open.task.bookId)) {
+      el('logBookSelect').value = open.task.bookId;
+      el('logTypeSelect').value = open.task.type;
+      kind = open.kind;
+    } else {
+      syncLogTypeToStage();
+    }
   }
   syncLogForm();
-  el('logModalTitle').textContent = extra ? 'Log extra work' : 'Log progress';
+
+  el('logModalTitle').textContent = extra
+    ? 'Log extra work'
+    : (kind === 'bonus' ? 'Log bonus round' : 'Log progress');
+
+  // Say which task the form arrived pointed at, so a modal that opened on a
+  // different book than you expected explains itself instead of quietly
+  // filing the words in the wrong place.
+  const hint = el('logModalHint');
+  if (!extra && kind === 'bonus') {
+    const round = state.bonusRound || 1;
+    hint.textContent = `Today's target is done. This is bonus round ${round}: ` +
+      `${describeTask(state.bonus, state.bonusBook, state.bonusDone || 0)}. ` +
+      'Optional as ever — leaving it costs you nothing.';
+    hint.classList.remove('hidden');
+  } else if (!extra && kind === 'done') {
+    hint.textContent = "Today's target is already met, so anything you log here is extra.";
+    hint.classList.remove('hidden');
+  } else {
+    hint.textContent = '';
+    hint.classList.add('hidden');
+  }
   el('logAmountInput').value = '';
   el('logNoteInput').value = '';
   el('chapterCompleteInput').checked = false;
+  // Ticked by default: a planning day usually does end with a chapter in it, and
+  // a book left in planning by an unnoticed checkbox stops asking for words.
+  el('chapterPlannedInput').checked = true;
   openModal('logModalBackdrop');
-  setTimeout(() => el('logAmountInput').focus(), 30);
+  // A plan entry has no amount to type, so send the cursor to the one field it
+  // does have.
+  const first = el('logTypeSelect').value === 'plan' ? el('logNoteInput') : el('logAmountInput');
+  setTimeout(() => first.focus(), 30);
 }
 
 function syncLogTypeToStage() {
@@ -1110,8 +1857,10 @@ function syncLogTypeToStage() {
 function syncLogForm() {
   const type = el('logTypeSelect').value;
   el('chapterCompleteRow').classList.toggle('hidden', type !== 'write');
+  el('chapterPlannedRow').classList.toggle('hidden', type !== 'plan');
   el('logAmountRow').classList.toggle('hidden', type === 'plan');
   el('logAmountLabel').textContent = type === 'edit' ? 'How many chapters?' : 'How many words?';
+  el('logNoteInput').placeholder = type === 'plan' ? 'What did you plan?' : 'What happened in it?';
 
   const presets = type === 'write' ? [250, 500, 750, 1000] : type === 'edit' ? [1, 2, 3] : [];
   const row = el('logPresetRow');
@@ -1134,16 +1883,43 @@ el('logSubmitBtn').addEventListener('click', async () => {
   const amount = type === 'plan' ? 1 : (parseInt(el('logAmountInput').value, 10) || 0);
   const note = el('logNoteInput').value;
   const chapterComplete = type === 'write' && el('chapterCompleteInput').checked;
+  const chapterPlanned = type !== 'plan' || el('chapterPlannedInput').checked;
   if (!bookId) return;
   if (amount <= 0) { toast('Enter an amount above zero.', 'bad'); el('logAmountInput').focus(); return; }
 
   const wasMet = !!(state.target && state.target.met);
-  state = await window.api.logProgress({ bookId, type, amount, note, chapterComplete });
+  const clearedBefore = state.bonusCleared || 0;
+  state = await window.api.logProgress({ bookId, type, amount, note, chapterComplete, chapterPlanned });
   closeModal('logModalBackdrop');
   render();
   if (currentView === 'history') refreshLogList();
   if (!wasMet && state.target && state.target.met) toast("Target met. Streak's safe today.", 'good');
+  // The dialog can be pointed at a bonus round now, so it has to be able to
+  // report clearing one — the quick-add chips aren't the only route any more.
+  else if ((state.bonusCleared || 0) > clearedBefore) {
+    toast(state.bonus && !state.bonus.met
+      ? 'Bonus round cleared. Here comes another.'
+      : 'Bonus round cleared. Show-off.', 'good');
+  }
   else toast('Progress logged.', 'good');
+});
+
+// ---------------- Press feedback ----------------
+// Delegated, because every chip in the app is thrown away and rebuilt on each
+// render — there's nothing stable to bind to.
+document.addEventListener('pointerdown', (e) => {
+  const chip = e.target.closest && e.target.closest('.chip');
+  if (!chip || chip.disabled) return;
+  if (window.Celebrate.reduced() || !window.Celebrate.isEnabled()) return;
+  const r = chip.getBoundingClientRect();
+  const size = Math.max(r.width, r.height) * 2.4;
+  const ripple = document.createElement('span');
+  ripple.className = 'fx-ripple';
+  ripple.style.width = ripple.style.height = size + 'px';
+  ripple.style.left = (e.clientX - r.left) + 'px';
+  ripple.style.top = (e.clientY - r.top) + 'px';
+  chip.appendChild(ripple);
+  ripple.addEventListener('animationend', () => ripple.remove());
 });
 
 // ---------------- Keyboard ----------------
@@ -1171,9 +1947,18 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---------------- Wiring ----------------
-window.api.onOpenLogModal(() => openLogModal());
+// Ctrl+Alt+W can fire from anywhere, long after the last poll — and on a cold
+// start it arrives before the renderer's own first getState() has come back.
+// Refresh first, so the form is pointed at the task that's open right now
+// rather than a minute ago's (or nothing at all).
+window.api.onOpenLogModal(async () => {
+  try { await refresh(); } catch (e) { /* fall back to whatever state we have */ }
+  if (state) openLogModal();
+});
 window.api.onStateChanged(() => refresh());
 
 refresh();
-// Keep the day rollover honest without yanking the UI out from under an open dialog.
-setInterval(() => { if (!anyModalOpen()) refresh(); }, 60 * 1000);
+// Keep the day rollover honest without yanking the UI out from under an open
+// dialog — and without redrawing a dashboard nothing has changed on, which used
+// to replay every chart and card animation once a minute.
+setInterval(() => { if (!anyModalOpen()) refresh({ onlyIfChanged: true }); }, 60 * 1000);
