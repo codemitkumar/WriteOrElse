@@ -35,20 +35,25 @@
           Books
           <kbd>2</kbd>
         </button>
+        <button class="nav-btn" data-view="ideas">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>
+          Ideas
+          <kbd>3</kbd>
+        </button>
         <button class="nav-btn" data-view="stats">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
           Stats
-          <kbd>3</kbd>
+          <kbd>4</kbd>
         </button>
         <button class="nav-btn" data-view="history">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
           History
-          <kbd>4</kbd>
+          <kbd>5</kbd>
         </button>
         <button class="nav-btn" data-view="settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           Settings
-          <kbd>5</kbd>
+          <kbd>6</kbd>
         </button>
       </div>
 
@@ -85,10 +90,23 @@
                   <span id="rerollLabel">Reroll</span>
                 </button>
                 <button class="btn ghost" id="restDayBtn">Rest day</button>
+                <div class="mode-switch" id="modeSwitch" role="group" aria-label="Difficulty">
+                  <button type="button" data-mode="easy">Easy</button>
+                  <button type="button" data-mode="hard">Hard</button>
+                </div>
               </div>
             </div>
             <div class="hero-ring" id="heroRing"></div>
           </div>
+        </div>
+
+        <!-- Hard mode: the whole day's list. The hero card above shows one of them. -->
+        <div class="task-list-card hidden" id="taskListCard">
+          <div class="task-list-head">
+            <span class="task-list-tag">Today's list</span>
+            <span class="task-list-count" id="taskListCount"></span>
+          </div>
+          <div class="task-list" id="taskList"></div>
         </div>
 
         <div class="bonus-card hidden" id="bonusCard">
@@ -100,6 +118,13 @@
           <div class="progress-track"><div class="progress-fill" id="bonusProgressFill"></div></div>
           <div class="progress-caption" id="bonusProgressCaption"></div>
           <div class="quick-add" id="bonusQuickAdd"></div>
+          <div class="task-list bonus-task-list hidden" id="bonusTaskList"></div>
+          <div class="bonus-actions">
+            <button class="btn ghost small" id="bonusRerollBtn" title="Swap this bonus round for a different one">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+              <span id="bonusRerollLabel">Reroll</span>
+            </button>
+          </div>
         </div>
 
         <!-- What the bonus rounds have bought -->
@@ -177,6 +202,28 @@
           <button class="btn primary" id="addBookBtn">Add book</button>
         </div>
         <div id="bookColumns" class="book-columns"></div>
+      </section>
+
+      <!-- IDEAS -->
+      <section class="view hidden" id="view-ideas">
+        <div class="section-header">
+          <h2>Ideas</h2>
+          <div class="section-actions">
+            <div class="search-wrap">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <input id="ideaSearch" type="search" placeholder="Search ideas&hellip;" />
+            </div>
+          </div>
+        </div>
+        <p class="section-hint">Ideas never turn into daily targets. Promote one when it's ready and it becomes a book in Planning.</p>
+        <div class="add-idea">
+          <input id="newIdeaTitle" type="text" placeholder="New idea&hellip;" maxlength="160" />
+          <textarea id="newIdeaNotes" rows="2" placeholder="Notes: premise, characters, the hook (optional)" maxlength="2000"></textarea>
+          <div class="add-idea-actions">
+            <button class="btn primary" id="addIdeaBtn">Add idea</button>
+          </div>
+        </div>
+        <div id="ideaList" class="idea-grid"></div>
       </section>
 
       <!-- STATS -->
@@ -402,6 +449,17 @@
         </div>
 
         <div class="card">
+          <div class="card-title">Hard mode</div>
+          <p class="modal-hint">Hard mode hands out a list of tasks each day, one per book, and the streak only counts once every task is done. Switch modes from the dashboard. Going back to easy is only allowed once the day's list is finished.</p>
+          <div class="settings-grid">
+            <label>
+              <span>Tasks per hard day</span>
+              <input type="number" id="setHardModeTasks" min="2" max="5" />
+            </label>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="card-title">Bonus rounds</div>
           <p class="modal-hint">Clear the day's real target and you're handed an extra task &mdash; and another every time you finish one, until the day rolls over. They never touch your streak, never raise your word level, and the nagging stays off whether you do them or not.</p>
           <div class="settings-grid">
@@ -409,6 +467,13 @@
               <span>Keep offering bonus tasks once the day's target is done</span>
               <label class="toggle">
                 <input type="checkbox" id="setBonusEnabled" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="switch-row">
+              <span>Each bonus round cleared in a day makes the next one harder</span>
+              <label class="toggle">
+                <input type="checkbox" id="setBonusEscalation" />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -604,7 +669,7 @@
         <div><span>Log progress</span><kbd>Ctrl</kbd><kbd>L</kbd></div>
         <div><span>New book</span><kbd>Ctrl</kbd><kbd>N</kbd></div>
         <div><span>Reroll today's target</span><kbd>Ctrl</kbd><kbd>R</kbd></div>
-        <div><span>Switch views</span><kbd>1</kbd>&ndash;<kbd>5</kbd></div>
+        <div><span>Switch views</span><kbd>1</kbd>&ndash;<kbd>6</kbd></div>
         <div><span>Close a dialog</span><kbd>Esc</kbd></div>
         <div><span>Save a dialog</span><kbd>Ctrl</kbd><kbd>Enter</kbd></div>
         <div><span>Open from anywhere</span><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>W</kbd></div>

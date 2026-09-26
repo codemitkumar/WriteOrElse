@@ -17,10 +17,12 @@ Windows · fully offline · no account, no telemetry, no network calls at all.
 - [Installing](#installing)
 - [How it works](#how-it-works)
   - [Books and stages](#books-and-stages)
+  - [Ideas](#ideas)
   - [The daily target](#the-daily-target)
   - [Planning days](#planning-days)
   - [Logging progress](#logging-progress)
   - [Streaks](#streaks)
+  - [Hard mode](#hard-mode)
   - [Slack: rest days and rerolls](#slack-rest-days-and-rerolls)
   - [Bonus rounds](#bonus-rounds)
   - [What bonus rounds pay](#what-bonus-rounds-pay)
@@ -78,6 +80,14 @@ Books move through five stages:
 
 A book can also be **paused**, which hides it from the daily picker without
 deleting any of its history.
+
+### Ideas
+
+The **Ideas** view is a parking lot for books you haven't committed to yet: a
+title plus optional notes. Ideas are never picked for a daily target, no matter
+how many you have. When one is ready, **Promote to book**. It leaves Ideas and
+shows up in Books under `Planning`, with its notes as the blurb, and from then
+on it's in the rotation like any other book.
 
 ### The daily target
 
@@ -153,12 +163,33 @@ was on and you were logged in) **and** the day's target was met.
 A day the app never ran — you were away — is **skipped, not counted as a miss.**
 It won't break your streak.
 
+### Hard mode
+
+Flip the **Easy / Hard** switch on the dashboard and each day becomes a list of
+tasks instead of one: three by default (2 to 5 in Settings), each on a
+different book, so a day can be shorter if fewer books are in rotation. The
+streak only counts once **every** task on the list is done. Bonus rounds only
+start after that, and the nagging keeps going until then.
+
+- The hero card shows one task at a time. Click any open task in **Today's
+  list** to work on that one instead. Each task can be rerolled while it's
+  untouched, from the same rerolls as always.
+- **Easy to hard** works any time. If today isn't finished yet, today's list
+  starts right away. If it is, hard mode starts tomorrow.
+- **Hard to easy** is locked until today's whole list is done. Then the switch
+  unlocks, and tomorrow is back to one task.
+- **Bonus rounds are lists too.** Once a hard day's list is done, each bonus
+  round is a list of the same size, one task per book, and the next round only
+  opens once every task on the current one is cleared. Rewards still count each
+  cleared bonus task on its own, so a hard round of three pays what three easy
+  rounds would.
+
 ### Slack: rest days and rerolls
 
 | | Default | Does |
 | --- | --- | --- |
 | **Rest day** | 1 per 7 days | Protects the streak and silences the nagging |
-| **Reroll** | 1 per day | Swaps a target you haven't started yet |
+| **Reroll** | 1 per day | Swaps a target — or a bonus round — you haven't started yet |
 
 Set either to `0` in Settings for the original no-escape-hatches behaviour.
 
@@ -172,6 +203,12 @@ targets.
 They're deliberately toothless. They never count toward the streak, never raise
 your word level, and the punisher ignores them completely, so leaving one
 unfinished costs you nothing. Switch them off entirely in Settings.
+
+Each round you clear in a day makes the next one bigger: word counts grow 25% a
+round up to double your word level, and editing rounds add a chapter every
+second round. Planning rounds stay at one outline. Rerolling a round keeps its
+size, and the whole chain starts small again tomorrow. Turn this off in Settings
+if you'd rather every round be the same size.
 
 ### What bonus rounds pay
 
@@ -269,6 +306,7 @@ Every number above is editable, and these are just the defaults:
 | Chance of a planning day | 15% |
 | Rest days per 7 days | 1 |
 | Rerolls per day | 1 |
+| Tasks per hard day | 3 |
 | Bonus rounds | On |
 | Celebrations | On |
 | Launch at login | On |
@@ -286,7 +324,7 @@ the app.
 | <kbd>Ctrl</kbd><kbd>L</kbd> | Log progress |
 | <kbd>Ctrl</kbd><kbd>N</kbd> | New book |
 | <kbd>Ctrl</kbd><kbd>R</kbd> | Reroll today's target |
-| <kbd>1</kbd>–<kbd>5</kbd> | Switch views |
+| <kbd>1</kbd>–<kbd>6</kbd> | Switch views |
 | <kbd>Esc</kbd> | Close a dialog |
 | <kbd>Ctrl</kbd><kbd>Enter</kbd> | Save a dialog |
 | <kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>W</kbd> | **From anywhere:** open the app straight into logging whatever is still open — the target, or the bonus round once the target is done |

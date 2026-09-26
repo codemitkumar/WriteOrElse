@@ -1,6 +1,6 @@
 let state = null;
 let currentView = 'dashboard';
-const ui = { search: '', sort: 'recent', showPaused: false };
+const ui = { search: '', sort: 'recent', showPaused: false, ideaSearch: '', editingIdeaId: null, focusTask: null, focusBonus: null };
 
 const el = (id) => document.getElementById(id);
 const fmt = (n) => (n || 0).toLocaleString();
@@ -136,6 +136,7 @@ function render() {
   renderDashboard();
   renderRewards();
   renderBooks();
+  renderIdeas();
   renderStats();
   renderHeatmap();
   renderLogFilters();
@@ -162,8 +163,11 @@ const fxSignals = {
     const books = s.books || [];
     const r = s.rewards || {};
     return {
-      targetMet: !!(s.target && s.target.met),
+      targetMet: !!(s.target && s.dayMet),
+      tasksMet: (s.tasks || []).filter(t => t.met).length,
+      taskCount: (s.tasks || []).length,
       bonusCleared: s.bonusCleared || 0,
+      bonusRoundsCleared: s.bonusRoundsCleared || 0,
       rerollCredits: r.rerollCredits || 0,
       projectPicks: r.projectPicks || 0,
       streak: (s.streak && s.streak.current) || 0,
@@ -215,15 +219,33 @@ function runCelebrations(before, after) {
 
   if (after.targetMet && !before.targetMet) {
     const book = state.targetBook;
+    const list = state.hard && after.taskCount > 1;
     events.push({
       tier: 3, tone: 'green', icon: '✓',
-      title: 'Target cleared',
-      subtitle: book ? `"${book.title}" — that's today's, and the streak with it.` : "That's today's, and the streak with it.",
+      title: list ? 'List cleared' : 'Target cleared',
+      subtitle: list
+        ? `All ${after.taskCount} tasks — that's today's, and the streak with it.`
+        : (book ? `"${book.title}" — that's today's, and the streak with it.` : "That's today's, and the streak with it."),
       duration: 3200,
       anchor: el('targetCard'),
       stamp: 'Complete',
       win: true,
       ignite: true
+    });
+  }
+
+  // One task off a hard day's list: worth a nod, not the confetti — that waits
+  // for the last one.
+  if (!after.targetMet && after.taskCount === before.taskCount && after.tasksMet > before.tasksMet) {
+    const left = after.taskCount - after.tasksMet;
+    events.push({
+      tier: 2, tone: 'green', icon: '✓',
+      title: 'Task cleared',
+      subtitle: `${left} more to go before the streak counts.`,
+      duration: 2800,
+      anchor: el('taskListCard'),
+      win: true,
+      quiet: true
     });
   }
 
@@ -241,8 +263,24 @@ function runCelebrations(before, after) {
     });
   }
 
-  if (after.bonusCleared > before.bonusCleared) {
-    const n = after.bonusCleared;
+  const roundDone = after.bonusRoundsCleared > before.bonusRoundsCleared;
+  if (after.bonusCleared > before.bonusCleared && !roundDone) {
+    // One task off a bonus list: a nod, the round banner waits for the last.
+    const left = (state.bonusTasks || []).filter(b => !b.met).length;
+    events.push({
+      tier: 1, tone: 'violet', icon: '✨',
+      title: 'Bonus task cleared',
+      subtitle: after.rerollCredits > before.rerollCredits
+        ? 'That one banked you a reroll.'
+        : `${left} more in this round. Still optional.`,
+      duration: 2600,
+      anchor: el('bonusCard'),
+      win: true,
+      quiet: true
+    });
+  }
+  if (roundDone) {
+    const n = after.bonusRoundsCleared;
     const more = state.bonus && !state.bonus.met;
     const credit = after.rerollCredits > before.rerollCredits;
     events.push({
@@ -369,12 +407,22 @@ function drawRing(host, pct, big, small, met) {
   }));
 }
 
+// Which of today's tasks the hero card is showing. On a hard day any open task
+// on the list can be picked; otherwise it's whichever one the day is waiting on.
+function heroIndex() {
+  const tasks = state.tasks || [];
+  const i = ui.focusTask;
+  if (Number.isInteger(i) && tasks[i] && !tasks[i].met) return i;
+  return state.focusIndex || 0;
+}
+
+function heroTask() {
+  return (state.tasks || [])[heroIndex()] || null;
+}
+
 function targetProgressToday() {
-  const t = state.target;
-  if (!t) return 0;
-  return state.todaysLogs
-    .filter(l => l.bookId === t.bookId && l.type === t.type)
-    .reduce((a, l) => a + l.amount, 0);
+  const t = heroTask();
+  return t ? t.done || 0 : 0;
 }
 
 function renderDashboard() {
@@ -385,8 +433,10 @@ function renderDashboard() {
 
   el('targetDate').textContent = prettyDate(state.today);
 
-  const target = state.target;
-  const book = state.targetBook;
+  const target = heroTask();
+  const book = target ? bookById(target.bookId) : null;
+  const tasks = state.tasks || [];
+  const listDay = state.hard && tasks.length > 1;
   const card = el('targetCard');
   card.classList.toggle('is-met', !!(target && target.met));
   card.classList.toggle('is-rest', state.isRestDay);
@@ -407,7 +457,9 @@ function renderDashboard() {
     el('targetTitle').textContent = 'No target today';
     el('targetSub').textContent = 'Add a book in the Books tab to get your first mission.';
   } else {
-    el('targetTag').textContent = target.met ? 'Mission complete' : "Today's Mission";
+    el('targetTag').textContent = listDay
+      ? (target.met ? 'List complete' : `Task ${heroIndex() + 1} of ${tasks.length}`)
+      : (target.met ? 'Mission complete' : "Today's Mission");
     el('targetTag').className = 'hero-tag' + (target.met ? ' met' : '');
     if (target.type === 'plan') {
       el('targetTitle').textContent = `Plan your next chapter of "${book.title}"`;
@@ -417,7 +469,7 @@ function renderDashboard() {
       el('targetTitle').textContent = `${verb} ${fmt(target.amount)} ${unit} of "${book.title}"`;
     }
     if (target.met) {
-      el('targetSub').textContent = "Done. Streak's safe today.";
+      el('targetSub').textContent = listDay ? `All ${tasks.length} done. Streak's safe today.` : "Done. Streak's safe today.";
     } else if (target.type === 'plan') {
       el('targetSub').textContent = 'No word count today — figure out what happens next. Say whether a whole chapter came out of it; if not, the book stays in planning.';
     } else if (target.type === 'write') {
@@ -460,20 +512,24 @@ function renderDashboard() {
   }
 
   renderQuickAdd(target, done);
+  renderTaskList();
+  renderModeSwitch();
   renderBonus();
 
   // Reroll / rest controls
   const reroll = el('rerollBtn');
-  reroll.disabled = !state.canReroll;
+  const canReroll = !!(target && target.canReroll);
+  reroll.disabled = !canReroll;
   el('rerollLabel').textContent = state.rerollsLeft > 0 ? `Reroll (${state.rerollsLeft})` : 'Reroll';
-  reroll.title = state.canReroll
-    ? "Swap today's target for a different one"
+  reroll.title = canReroll
+    ? (listDay ? 'Swap this task for a different one' : "Swap today's target for a different one")
     : 'Rerolls are only available before you log anything, and while you have one left';
   const rest = el('restDayBtn');
   rest.textContent = state.isRestDay ? 'Cancel rest day' : `Rest day (${state.restDaysLeft})`;
   rest.disabled = !state.isRestDay && state.restDaysLeft <= 0;
 
   // Metrics
+  const wordGoal = tasks.filter(t => t.type === 'write').reduce((a, t) => a + t.amount, 0);
   const delta = st.words7 - st.wordsPrev7;
   el('weekDelta').textContent = st.wordsPrev7
     ? `${delta >= 0 ? '+' : ''}${fmt(delta)} vs previous week`
@@ -482,7 +538,7 @@ function renderDashboard() {
 
   el('metricRow').innerHTML = [
     metricCard('Current streak', state.streak.current, `longest ${state.streak.longest}`, state.streak.current > 0 ? 'accent' : ''),
-    metricCard('Words today', fmt(st.wordsToday), target && target.type === 'write' ? `target ${fmt(target.amount)}` : 'no word target today'),
+    metricCard('Words today', fmt(st.wordsToday), wordGoal ? `target ${fmt(wordGoal)}` : 'no word target today'),
     metricCard('This week', fmt(st.words7), 'last 7 days'),
     metricCard('Word level', fmt(state.wordTarget.current), `cap ${fmt(state.wordTarget.cap)}`),
     metricCard('Consistency', st.consistency + '%', 'targets met, 10 weeks', st.consistency >= 70 ? 'good' : '')
@@ -524,6 +580,130 @@ function renderDashboard() {
   el('statsRow').querySelectorAll('[data-stage]').forEach(chip => {
     chip.addEventListener('click', () => switchView('books'));
   });
+}
+
+// ---------------- Hard mode ----------------
+// Hard days are a list. The hero card still shows one task at a time — the
+// list underneath is where you see the rest and pick which one to work on.
+function taskCaption(t) {
+  if (t.type === 'plan') return t.met ? 'Planned' : 'One outline';
+  return `${fmt(Math.min(t.done || 0, t.amount))} / ${fmt(t.amount)}`;
+}
+
+function taskLine(t) {
+  const title = (bookById(t.bookId) || {}).title || 'your book';
+  if (t.type === 'plan') return `Plan your next chapter of "${title}"`;
+  const verb = t.type === 'write' ? 'Write' : 'Edit';
+  const unit = t.type === 'write' ? 'words' : (t.amount === 1 ? 'chapter' : 'chapters');
+  return `${verb} ${fmt(t.amount)} ${unit} of "${title}"`;
+}
+
+function renderTaskList() {
+  const card = el('taskListCard');
+  const tasks = state.tasks || [];
+  if (!state.hard || tasks.length < 2 || state.isRestDay) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  card.classList.toggle('is-met', !!state.dayMet);
+  const met = tasks.filter(t => t.met).length;
+  el('taskListCount').textContent = state.dayMet
+    ? `All ${tasks.length} done`
+    : `${met} of ${tasks.length} done · the streak needs all of them`;
+
+  const active = heroIndex();
+  el('taskList').innerHTML = tasks.map((t, i) => {
+    const pct = t.met ? 100 : Math.min(100, Math.round(((t.done || 0) / t.amount) * 100));
+    const cls = ['task-row', t.met ? 'met' : '', !t.met && i === active ? 'active' : ''].join(' ');
+    return `<button type="button" class="${cls}" data-task="${i}" ${t.met ? 'disabled' : ''}
+        title="${t.met ? 'Done' : 'Show this task above'}">
+      <span class="task-check">${t.met ? '✓' : i + 1}</span>
+      <span class="task-main">
+        <span class="task-desc">${escapeHtml(taskLine(t))}</span>
+        <span class="task-bar"><i style="width:${pct}%"></i></span>
+      </span>
+      <span class="task-caption">${escapeHtml(taskCaption(t))}</span>
+    </button>`;
+  }).join('');
+
+  el('taskList').querySelectorAll('[data-task]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      ui.focusTask = parseInt(btn.dataset.task, 10);
+      renderDashboard();
+    });
+  });
+}
+
+// Leaving hard mode is locked while today's list is open. The button still
+// takes a click so it can say why, rather than just sitting there greyed out.
+function easyLocked() {
+  return !!(state.hard && !state.dayMet && (state.tasks || []).length);
+}
+
+function renderModeSwitch() {
+  const mode = state.difficulty || 'easy';
+  const locked = mode === 'hard' && easyLocked();
+  el('modeSwitch').querySelectorAll('[data-mode]').forEach(btn => {
+    const isActive = btn.dataset.mode === mode;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', String(isActive));
+    btn.classList.toggle('locked', btn.dataset.mode === 'easy' && locked);
+  });
+  el('modeSwitch').title = mode === 'hard'
+    ? (locked ? "Hard mode. Finish today's list to switch back to easy." : 'Hard mode. A list of tasks a day.')
+    : 'Easy mode. One task a day.';
+}
+
+el('modeSwitch').querySelectorAll('[data-mode]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const mode = btn.dataset.mode;
+    if (mode === (state.difficulty || 'easy')) return;
+    if (mode === 'hard') {
+      const n = state.settings.hardModeTasks || 3;
+      const startsNow = !!(state.target && !state.dayMet && !state.isRestDay);
+      const ok = await confirmDialog({
+        title: 'Switch to hard mode?',
+        body: `Each day becomes a list of up to ${n} tasks, one per book, and the streak only counts once every one is done. ` +
+          (startsNow ? "Today's list starts now. " : 'It starts tomorrow, since today is already settled. ') +
+          "You can go back to easy, but only after finishing a day's whole list.",
+        okLabel: 'Go hard',
+        danger: true
+      });
+      if (!ok) return;
+    }
+    const res = await window.api.setDifficulty(mode);
+    state = res.state;
+    ui.focusTask = null;
+    render();
+    toast(res.message, res.ok ? 'good' : 'bad', res.ok ? 3600 : 4200);
+  });
+});
+
+// What the day looked like before a log, so the toast afterwards can say what
+// that log actually did: finished the day, finished one task on the list, or
+// neither.
+function snapshotDay() {
+  return {
+    dayMet: !!state.dayMet,
+    tasksMet: (state.tasks || []).filter(t => t.met).length,
+    taskCount: (state.tasks || []).length
+  };
+}
+
+function dayToast(before) {
+  const tasks = state.tasks || [];
+  if (!before.dayMet && state.dayMet) {
+    toast(state.hard && tasks.length > 1 ? "Whole list done. Streak's safe today." : "Target met. Streak's safe today.", 'good');
+    return true;
+  }
+  const met = tasks.filter(t => t.met).length;
+  if (!state.dayMet && tasks.length === before.taskCount && met > before.tasksMet) {
+    const left = tasks.length - met;
+    toast(`Task done. ${left} to go.`, 'good');
+    return true;
+  }
+  return false;
 }
 
 // Metric rows are rebuilt with innerHTML, so a card can't hold its own previous
@@ -618,26 +798,73 @@ function describeTask(task, book, done) {
   return `${verb} ${fmt(task.amount)} ${unit} of "${title}"`;
 }
 
+// Which bonus task the card is showing. A hard day's round is a list, and any
+// open task on it can be picked, same as the day's own list.
+function bonusTask() {
+  const tasks = state.bonusTasks || [];
+  const picked = tasks.find(b => b.index === ui.focusBonus && !b.met);
+  if (picked) return picked;
+  const current = tasks.find(b => b.index === state.bonusIndex);
+  if (current) return current;
+  return state.bonus ? Object.assign({ done: state.bonusDone || 0, canReroll: state.canRerollBonus }, state.bonus) : null;
+}
+
+function renderBonusList() {
+  const list = el('bonusTaskList');
+  const tasks = state.bonusTasks || [];
+  if (tasks.length < 2) {
+    list.classList.add('hidden');
+    list.innerHTML = '';
+    return;
+  }
+  const active = bonusTask();
+  list.classList.remove('hidden');
+  list.innerHTML = tasks.map((t, n) => {
+    const pct = t.met ? 100 : Math.min(100, Math.round(((t.done || 0) / t.amount) * 100));
+    const cls = ['task-row', t.met ? 'met' : '', !t.met && active && t.index === active.index ? 'active' : ''].join(' ');
+    return `<button type="button" class="${cls}" data-bonus-task="${t.index}" ${t.met ? 'disabled' : ''}
+        title="${t.met ? 'Done' : 'Show this bonus task above'}">
+      <span class="task-check">${t.met ? '✓' : n + 1}</span>
+      <span class="task-main">
+        <span class="task-desc">${escapeHtml(describeTask(t, bookById(t.bookId), t.done || 0))}</span>
+        <span class="task-bar"><i style="width:${pct}%"></i></span>
+      </span>
+      <span class="task-caption">${escapeHtml(taskCaption(t))}</span>
+    </button>`;
+  }).join('');
+  list.querySelectorAll('[data-bonus-task]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      ui.focusBonus = parseInt(btn.dataset.bonusTask, 10);
+      renderBonus();
+    });
+  });
+}
+
 function renderBonus() {
   const card = el('bonusCard');
-  const bonus = state.bonus;
+  const bonus = bonusTask();
   if (!bonus) { card.classList.add('hidden'); return; }
   card.classList.remove('hidden');
   card.classList.toggle('is-met', !!bonus.met);
 
-  const done = state.bonusDone || 0;
+  const tasks = state.bonusTasks || [];
+  const listRound = tasks.length > 1;
+  const done = bonus.done || 0;
   const cleared = state.bonusCleared || 0;
   const round = state.bonusRound || 1;
   const pct = bonus.met ? 100 : Math.min(100, Math.round((done / bonus.amount) * 100));
-  el('bonusTag').textContent = bonus.met ? 'Bonus complete' : (round > 1 ? `Bonus round ${round}` : 'Bonus round');
+  const roundName = round > 1 ? `Bonus round ${round}` : 'Bonus round';
+  el('bonusTag').textContent = bonus.met
+    ? 'Bonus complete'
+    : (listRound ? `${roundName} · task ${tasks.indexOf(bonus) + 1} of ${tasks.length}` : roundName);
   // A cleared round normally hands out the next one straight away, so this only
   // reads "met" when nothing was left to offer (no eligible books, or the day
   // has run out).
   el('bonusTitle').textContent = bonus.met
     ? 'Bonus done. Nothing more is asked of you today.'
-    : describeTask(bonus, state.bonusBook, done);
+    : describeTask(bonus, bookById(bonus.bookId), done);
   el('bonusFree').textContent = cleared
-    ? `${cleared} cleared today · the next one is still optional`
+    ? `${cleared} bonus task${cleared === 1 ? '' : 's'} cleared today · the next is still optional`
     : 'Optional — skipping it costs you nothing';
   setProgress(el('bonusProgressFill'), pct, !!bonus.met);
   el('bonusProgressCaption').textContent = bonus.type === 'plan'
@@ -655,30 +882,54 @@ function renderBonus() {
   });
   const extra = row.querySelector('[data-extra]');
   if (extra) extra.addEventListener('click', () => openLogModal(bonus.bookId, bonus.type, true));
+  renderBonusList();
+
+  const reroll = el('bonusRerollBtn');
+  reroll.disabled = !bonus.canReroll;
+  el('bonusRerollLabel').textContent = state.rerollsLeft > 0 ? `Reroll (${state.rerollsLeft})` : 'Reroll';
+  reroll.title = bonus.canReroll
+    ? (listRound ? 'Swap this bonus task for a different one — spends a reroll' : 'Swap this bonus round for a different one — spends a reroll')
+    : 'Rerolls are only available before you log anything on this round, and while you have one left';
 }
 
 async function quickLogBonus(amount, chapterPlanned = true) {
-  const bonus = state.bonus;
+  const bonus = bonusTask();
   if (!bonus) return;
-  const clearedBefore = state.bonusCleared || 0;
+  const before = snapshotBonus();
   state = await window.api.logProgress({ bookId: bonus.bookId, type: bonus.type, amount, note: '', chapterComplete: false, chapterPlanned });
   render();
-  if ((state.bonusCleared || 0) > clearedBefore) {
+  if (!bonusToast(before)) toast('Bonus progress logged.', 'good');
+}
+
+function snapshotBonus() {
+  return { cleared: state.bonusCleared || 0, rounds: state.bonusRoundsCleared || 0 };
+}
+
+// Says what a log did to the bonus rounds, if anything. False when nothing
+// was cleared, so the caller can fall back to its own message.
+function bonusToast(before) {
+  if ((state.bonusRoundsCleared || 0) > before.rounds) {
     toast(state.bonus && !state.bonus.met
       ? 'Bonus round cleared. Here comes another.'
       : 'Bonus round cleared. Show-off.', 'good');
-  } else {
-    toast('Bonus progress logged.', 'good');
+    return true;
   }
+  if ((state.bonusCleared || 0) > before.cleared) {
+    const left = (state.bonusTasks || []).filter(b => !b.met).length;
+    toast(`Bonus task cleared. ${left} left in this round.`, 'good');
+    return true;
+  }
+  return false;
 }
 
 async function quickLog(amount, chapterPlanned = true) {
-  const target = state.target;
+  const target = heroTask();
   if (!target) return;
+  const before = snapshotDay();
   state = await window.api.logProgress({ bookId: target.bookId, type: target.type, amount, note: '', chapterComplete: false, chapterPlanned });
   render();
-  if (state.target && state.target.met) toast("Target met. Streak's safe today.", 'good');
-  else if (target.type === 'plan') toast('Planning logged.', 'good');
+  if (dayToast(before)) return;
+  if (target.type === 'plan') toast('Planning logged.', 'good');
   else toast(`Logged ${target.type === 'write' ? fmt(amount) + ' words' : amount + ' chapter(s)'}.`, 'good');
 }
 
@@ -802,7 +1053,7 @@ function bookMenuItems(b) {
 }
 
 function bookCardHtml(b) {
-  const isTarget = state.target && state.target.bookId === b.id;
+  const isTarget = (state.tasks || []).some(t => t.bookId === b.id);
   const primary = PRIMARY_ACTION[b.stage];
   const actions = primary
     ? `<button class="btn ${primary.ghost ? 'ghost' : 'primary'}" data-action="${primary.action}" data-id="${b.id}">${primary.label}</button>`
@@ -908,14 +1159,15 @@ async function onBookAction(action, id) {
     state = res.state;
     render();
     // A reroll was spent, so show what it bought — same reel as rerolling by hand.
-    if (res.targetChanged && state.target) {
+    const replaced = Number.isInteger(res.index) ? (state.tasks || [])[res.index] : null;
+    if (res.targetChanged && replaced) {
       el('spinnerTitle').textContent = res.banked ? 'Spending a banked reroll' : "Spending today's reroll";
       el('spinnerHint').textContent = '"' + book.title + '" is off to planning. Here is the day instead.';
       const done = el('spinnerDoneBtn');
       done.disabled = true;
       done.textContent = 'Rolling...';
       openModal('spinnerModalBackdrop');
-      runReel(state.target, () => { done.disabled = false; done.textContent = 'Take it'; });
+      runReel(replaced, () => { done.disabled = false; done.textContent = 'Take it'; });
     } else {
       toast(res.message, res.ok ? 'good' : 'bad');
     }
@@ -964,6 +1216,129 @@ el('bookSort').addEventListener('change', (e) => { ui.sort = e.target.value; ren
 el('showPaused').addEventListener('change', (e) => { ui.showPaused = e.target.checked; renderBooks(); });
 
 // ---------------- Stats ----------------
+// ---------------- Ideas ----------------
+// A parking lot, not a queue: nothing here is ever handed out as a target.
+// Promoting an idea is the only way out, and it lands the book in Planning.
+function renderIdeas() {
+  const ideas = state.ideas || [];
+  const needle = ui.ideaSearch.trim().toLowerCase();
+  const visible = ideas
+    .filter(i => !needle || i.title.toLowerCase().includes(needle) || (i.notes || '').toLowerCase().includes(needle))
+    .slice()
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  const list = el('ideaList');
+  if (!visible.length) {
+    list.innerHTML = emptyState('&#128161;', ideas.length ? 'No ideas match that search.' : 'No ideas yet. Jot one down above.');
+    return;
+  }
+  list.innerHTML = visible.map(i => i.id === ui.editingIdeaId ? ideaEditHtml(i) : ideaCardHtml(i)).join('');
+
+  list.querySelectorAll('[data-idea-action]').forEach(btn => {
+    btn.addEventListener('click', () => onIdeaAction(btn.dataset.ideaAction, btn.dataset.id));
+  });
+  const editing = list.querySelector('.idea-card.editing');
+  if (editing) {
+    editing.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); onIdeaAction('cancelEdit', ui.editingIdeaId); }
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.stopPropagation(); onIdeaAction('save', ui.editingIdeaId); }
+    });
+  }
+}
+
+function ideaCardHtml(i) {
+  const added = i.createdAt ? new Date(i.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  return `
+    <div class="idea-card" data-id="${i.id}">
+      <div class="title">${escapeHtml(i.title)}</div>
+      ${i.notes ? `<div class="idea-notes">${escapeHtml(i.notes)}</div>` : ''}
+      <div class="idea-foot">
+        <span class="idea-date">${added ? 'Added ' + escapeHtml(added) : ''}</span>
+        <div class="actions">
+          <button class="btn ghost" data-idea-action="edit" data-id="${i.id}">Edit</button>
+          <button class="btn ghost danger-text" data-idea-action="delete" data-id="${i.id}">Delete</button>
+          <button class="btn primary" data-idea-action="promote" data-id="${i.id}">Promote to book</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function ideaEditHtml(i) {
+  return `
+    <div class="idea-card editing" data-id="${i.id}">
+      <input class="idea-edit-title" type="text" maxlength="160" value="${escapeHtml(i.title)}" />
+      <textarea class="idea-edit-notes" rows="4" maxlength="2000" placeholder="Notes">${escapeHtml(i.notes || '')}</textarea>
+      <div class="idea-foot">
+        <span></span>
+        <div class="actions">
+          <button class="btn ghost" data-idea-action="cancelEdit" data-id="${i.id}">Cancel</button>
+          <button class="btn primary" data-idea-action="save" data-id="${i.id}">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function onIdeaAction(action, id) {
+  const idea = (state.ideas || []).find(i => i.id === id);
+  if (!idea) return;
+
+  if (action === 'edit') {
+    ui.editingIdeaId = id;
+    renderIdeas();
+    el('ideaList').querySelector('.idea-edit-title')?.focus();
+  } else if (action === 'cancelEdit') {
+    ui.editingIdeaId = null;
+    renderIdeas();
+  } else if (action === 'save') {
+    const card = el('ideaList').querySelector('.idea-card.editing');
+    const title = card.querySelector('.idea-edit-title').value.trim();
+    if (!title) { card.querySelector('.idea-edit-title').focus(); return; }
+    state = await window.api.updateIdea(id, title, card.querySelector('.idea-edit-notes').value);
+    ui.editingIdeaId = null;
+    render();
+    toast('Idea saved.', 'good');
+  } else if (action === 'delete') {
+    const ok = await confirmDialog({
+      title: `Delete "${idea.title}"?`,
+      body: 'The idea and its notes are gone for good. This cannot be undone.',
+      okLabel: 'Delete idea'
+    });
+    if (!ok) return;
+    state = await window.api.deleteIdea(id);
+    if (ui.editingIdeaId === id) ui.editingIdeaId = null;
+    render();
+    toast('Idea deleted.');
+  } else if (action === 'promote') {
+    const ok = await confirmDialog({
+      title: `Promote "${idea.title}" to a book?`,
+      body: 'It moves to Books under Planning, and its notes become the blurb. From then on it can be picked for daily targets, starting with planning the first chapter.',
+      okLabel: 'Promote to book',
+      danger: false
+    });
+    if (!ok) return;
+    const res = await window.api.promoteIdea(id);
+    state = res.state;
+    if (ui.editingIdeaId === id) ui.editingIdeaId = null;
+    render();
+    toast(res.ok ? `"${idea.title}" is a book now. It's in Planning.` : 'That idea no longer exists.', res.ok ? 'good' : 'bad');
+  }
+}
+
+el('addIdeaBtn').addEventListener('click', async () => {
+  const title = el('newIdeaTitle').value.trim();
+  if (!title) { el('newIdeaTitle').focus(); return; }
+  state = await window.api.addIdea(title, el('newIdeaNotes').value);
+  el('newIdeaTitle').value = '';
+  el('newIdeaNotes').value = '';
+  render();
+  toast('Idea saved.', 'good');
+  el('newIdeaTitle').focus();
+});
+el('newIdeaTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') el('addIdeaBtn').click(); });
+el('ideaSearch').addEventListener('input', (e) => { ui.ideaSearch = e.target.value; renderIdeas(); });
+
 function renderStats() {
   const st = state.stats;
   el('statMetrics').innerHTML = [
@@ -990,14 +1365,24 @@ function renderStats() {
 
   const ranked = state.books.slice().sort((a, b) => (b.wordsWritten || 0) - (a.wordsWritten || 0)).slice(0, 8);
   const topWords = Math.max(1, ...ranked.map(b => b.wordsWritten || 0));
-  el('bookBars').innerHTML = ranked.length && topWords > 1 ? ranked.map(b => `
+  el('bookBars').innerHTML = ranked.length && topWords > 1 ? ranked.map(b => {
+    const words = b.wordsWritten || 0;
+    // A book with a target measures itself against that target; the label says
+    // "35,000 / 300,000", so the bar has to agree. Only books with no target
+    // fall back to a share-of-the-biggest-book comparison.
+    const pct = b.targetWords
+      ? Math.min(100, Math.round((words / b.targetWords) * 100))
+      : Math.round((words / topWords) * 100);
+    const tip = b.targetWords ? `${pct}% of ${fmt(b.targetWords)} words` : `${fmt(words)} words`;
+    return `
     <div class="bb-row">
       <div class="bb-head">
         <span class="bb-title">${escapeHtml(b.title)}</span>
-        <span class="bb-val">${fmt(b.wordsWritten)}${b.targetWords ? ' / ' + fmt(b.targetWords) : ''}</span>
+        <span class="bb-val">${fmt(words)}${b.targetWords ? ' / ' + fmt(b.targetWords) : ''}</span>
       </div>
-      <div class="bb-track"><div class="bb-fill" style="width:${Math.round(((b.wordsWritten || 0) / topWords) * 100)}%"></div></div>
-    </div>`).join('') : emptyState('&#128202;', 'No words logged yet.');
+      <div class="bb-track" title="${tip}"><div class="bb-fill${b.targetWords ? '' : ' relative'}" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join('') : emptyState('&#128202;', 'No words logged yet.');
 
   el('recordsList').innerHTML = [
     ['Longest streak', `${state.streak.longest} day(s)`],
@@ -1053,9 +1438,9 @@ function renderBonusStats() {
 
   el('bonusLedger').innerHTML = [
     ['Rerolls banked', ledger(b.rerollsEarned, b.rerollsSpent, b.rerollsLeft)],
-    ['Next reroll in', `${b.toNextReroll} round${b.toNextReroll === 1 ? '' : 's'}`],
+    ['Next reroll in', `${b.toNextReroll} bonus task${b.toNextReroll === 1 ? '' : 's'}`],
     ['Project picks', ledger(b.picksEarned, b.picksSpent, b.picksLeft)],
-    ['Next pick in', `${b.toNextPick} round${b.toNextPick === 1 ? '' : 's'} this month`],
+    ['Next pick in', `${b.toNextPick} bonus task${b.toNextPick === 1 ? '' : 's'} this month`],
     ['Days with a round cleared', fmt(b.daysCleared)],
     ['Average on those days', b.avgPerActiveDay ? `${b.avgPerActiveDay} rounds` : '—'],
     ['Earning rate', `1 reroll / ${b.perReroll} rounds · 1 pick / ${b.perPick} a month`]
@@ -1081,7 +1466,8 @@ function renderHeatmap() {
     const delay = `animation-delay:${Math.floor(i / 7) * 26}ms`;
     if (!d) return `<div class="heat-cell future" style="${delay}"></div>`;
     const bits = [];
-    if (d.target) bits.push(`${d.target.type} ${fmt(d.target.amount)}`);
+    if (d.hard && d.tasks > 1) bits.push(`hard: ${d.tasksMet}/${d.tasks} tasks`);
+    else if (d.target) bits.push(`${d.target.type} ${fmt(d.target.amount)}`);
     if (d.words) bits.push(`${fmt(d.words)} words`);
     if (d.chapters) bits.push(`${d.chapters} chapter(s)`);
     const label = `${prettyDate(d.date)} — ${d.status}${bits.length ? ' — ' + bits.join(', ') : ''}`;
@@ -1316,13 +1702,9 @@ el('detailsSaveBtn').addEventListener('click', async () => {
 // target you don't fancy. It costs a reroll instead, and that has to be said out
 // loud before it's spent, not after.
 async function confirmNeedsPlanning(book) {
-  const t = state.target;
-  const costs = t && !t.met && t.type === 'write' && t.bookId === book.id;
-  if (!costs) return true;
-
-  const done = state.todaysLogs
-    .filter(l => l.bookId === t.bookId && l.type === 'write')
-    .reduce((a, l) => a + l.amount, 0);
+  const t = (state.tasks || []).find(x => !x.met && x.type === 'write' && x.bookId === book.id);
+  if (!t) return true;
+  const done = t.done || 0;
 
   if (state.rerollsLeft > 0) {
     const banked = state.rewards && state.rewards.freeRerollsLeft <= 0;
@@ -1371,8 +1753,8 @@ function renderRewards() {
   // A track one round away from paying out breathes, so you can see it coming.
   el('rewardRerollFill').classList.toggle('fx-charging', r.toNextReroll === 1);
   el('rewardRerollSub').textContent = r.toNextReroll === 1
-    ? 'One more round earns another'
-    : r.toNextReroll + ' more rounds earn another';
+    ? 'One more bonus task earns another'
+    : r.toNextReroll + ' more bonus tasks earn another';
   el('rewardRerollSlot').classList.toggle('has-credit', r.rerollCredits > 0);
 
   window.Celebrate.countUp(el('rewardPickCount'), r.projectPicks, { format: (n) => String(Math.round(n)) });
@@ -1384,7 +1766,7 @@ function renderRewards() {
 
   el('rewardPickSub').textContent = r.nextPick
     ? 'Tomorrow is locked to "' + r.nextPick.title + '"'
-    : (r.clearedThisMonth % r.perPick) + ' of ' + r.perPick + ' rounds this month · ' + r.toNextPick + ' to go';
+    : (r.clearedThisMonth % r.perPick) + ' of ' + r.perPick + ' bonus tasks this month · ' + r.toNextPick + ' to go';
 }
 
 // ---- the reroll spinner ----
@@ -1457,10 +1839,25 @@ function runReel(target, onDone) {
 
 let spinnerBusy = false;
 
+let spinnerToast = 'New target locked in. No takebacks.';
+
 async function rerollWithSpinner() {
-  if (spinnerBusy || !state.canReroll) return;
+  const task = heroTask();
+  if (spinnerBusy || !task || !task.canReroll) return;
   spinnerBusy = true;
-  const res = await window.api.rerollTarget();
+  const res = await window.api.rerollTarget(task.index);
+  spinReroll(res, false);
+}
+
+async function rerollBonusWithSpinner() {
+  const bonus = bonusTask();
+  if (spinnerBusy || !bonus || !bonus.canReroll) return;
+  spinnerBusy = true;
+  const res = await window.api.rerollBonus(bonus.index);
+  spinReroll(res, true);
+}
+
+function spinReroll(res, isBonus) {
   if (!res.ok) {
     spinnerBusy = false;
     toast(res.message, 'bad');
@@ -1469,16 +1866,24 @@ async function rerollWithSpinner() {
   state = res.state;
   render();
 
-  el('spinnerTitle').textContent = res.banked ? 'Spending a banked reroll' : 'Rolling a new mission';
-  el('spinnerHint').textContent = res.banked
-    ? 'Bought with bonus rounds. Wherever it lands, that is the day.'
-    : 'Wherever it lands, that is the day.';
+  el('spinnerTitle').textContent = res.banked
+    ? 'Spending a banked reroll'
+    : (isBonus ? 'Rolling a new bonus round' : 'Rolling a new mission');
+  el('spinnerHint').textContent = isBonus
+    ? 'Still optional. Wherever it lands, that is the round.'
+    : res.banked
+      ? 'Bought with bonus rounds. Wherever it lands, that is the day.'
+      : 'Wherever it lands, that is the day.';
+  spinnerToast = isBonus ? 'New bonus round locked in.' : 'New target locked in. No takebacks.';
   const done = el('spinnerDoneBtn');
   done.disabled = true;
   done.textContent = 'Rolling...';
   openModal('spinnerModalBackdrop');
 
-  runReel(state.target, () => {
+  const rolled = isBonus
+    ? ((state.bonusTasks || []).find(b => b.index === res.index) || state.bonus)
+    : ((state.tasks || [])[res.index] || state.target);
+  runReel(rolled, () => {
     done.disabled = false;
     done.textContent = 'Take it';
     spinnerBusy = false;
@@ -1488,7 +1893,7 @@ async function rerollWithSpinner() {
 el('spinnerDoneBtn').addEventListener('click', () => {
   if (spinnerBusy) return;
   closeModal('spinnerModalBackdrop');
-  toast('New target locked in. No takebacks.', 'good');
+  toast(spinnerToast, 'good');
 });
 
 // ---- the project pick ----
@@ -1510,7 +1915,7 @@ function openPickModal() {
   if (!books.length) { toast('No books in the rotation to choose from.', 'bad'); return; }
   pickBusy = false;
   el('pickHint').textContent = state.rewards.clearedThisMonth +
-    " bonus rounds cleared this month. Tomorrow's mission is yours to name.";
+    " bonus tasks cleared this month. Tomorrow's mission is yours to name.";
   const deck = el('pickDeck');
   deck.classList.remove('resolved');
   deck.innerHTML = books.map(pickCardHtml).join('');
@@ -1685,7 +2090,9 @@ function renderSettings() {
   el('setPlanningProbability').value = Math.round(s.planningProbability * 100);
   el('setRestDaysPerWeek').value = s.restDaysPerWeek;
   el('setRerollsPerDay').value = s.rerollsPerDay;
+  el('setHardModeTasks').value = s.hardModeTasks || 3;
   el('setBonusEnabled').checked = s.bonusTasksEnabled;
+  el('setBonusEscalation').checked = s.bonusEscalation !== false;
   el('setCelebrations').checked = s.celebrations !== false;
   el('setAutoLaunch').checked = s.autoLaunch;
 }
@@ -1719,7 +2126,9 @@ el('saveSettingsBtn').addEventListener('click', async () => {
     planningProbability: Math.max(0, Math.min(100, parseInt(el('setPlanningProbability').value, 10) || 0)) / 100,
     restDaysPerWeek: Math.max(0, parseInt(el('setRestDaysPerWeek').value, 10) || 0),
     rerollsPerDay: Math.max(0, parseInt(el('setRerollsPerDay').value, 10) || 0),
+    hardModeTasks: Math.max(2, Math.min(5, parseInt(el('setHardModeTasks').value, 10) || 3)),
     bonusTasksEnabled: el('setBonusEnabled').checked,
+    bonusEscalation: el('setBonusEscalation').checked,
     celebrations: el('setCelebrations').checked,
     autoLaunch: el('setAutoLaunch').checked
   };
@@ -1768,6 +2177,7 @@ el('restDayBtn').addEventListener('click', async () => {
 });
 
 el('rerollBtn').addEventListener('click', rerollWithSpinner);
+el('bonusRerollBtn').addEventListener('click', rerollBonusWithSpinner);
 
 // ---------------- Log modal ----------------
 // `extra` is the "I wrote extra..." entry point from a task card: same form, but
@@ -1887,21 +2297,16 @@ el('logSubmitBtn').addEventListener('click', async () => {
   if (!bookId) return;
   if (amount <= 0) { toast('Enter an amount above zero.', 'bad'); el('logAmountInput').focus(); return; }
 
-  const wasMet = !!(state.target && state.target.met);
-  const clearedBefore = state.bonusCleared || 0;
+  const before = snapshotDay();
+  const bonusBefore = snapshotBonus();
   state = await window.api.logProgress({ bookId, type, amount, note, chapterComplete, chapterPlanned });
   closeModal('logModalBackdrop');
   render();
   if (currentView === 'history') refreshLogList();
-  if (!wasMet && state.target && state.target.met) toast("Target met. Streak's safe today.", 'good');
+  if (dayToast(before)) return;
   // The dialog can be pointed at a bonus round now, so it has to be able to
   // report clearing one — the quick-add chips aren't the only route any more.
-  else if ((state.bonusCleared || 0) > clearedBefore) {
-    toast(state.bonus && !state.bonus.met
-      ? 'Bonus round cleared. Here comes another.'
-      : 'Bonus round cleared. Show-off.', 'good');
-  }
-  else toast('Progress logged.', 'good');
+  if (!bonusToast(bonusBefore)) toast('Progress logged.', 'good');
 });
 
 // ---------------- Press feedback ----------------
@@ -1938,11 +2343,11 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault(); switchView('books'); el('newBookTitle').focus(); return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
-    e.preventDefault(); if (state && state.canReroll) el('rerollBtn').click(); return;
+    e.preventDefault(); if (state && heroTask() && heroTask().canReroll) el('rerollBtn').click(); return;
   }
   if (typing || anyModalOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
 
-  const views = { '1': 'dashboard', '2': 'books', '3': 'stats', '4': 'history', '5': 'settings' };
+  const views = { '1': 'dashboard', '2': 'books', '3': 'ideas', '4': 'stats', '5': 'history', '6': 'settings' };
   if (views[e.key]) { e.preventDefault(); switchView(views[e.key]); }
 });
 

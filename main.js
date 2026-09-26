@@ -97,15 +97,21 @@ function describeTargetShort(state) {
   if (!state.target || !state.targetBook) return 'No target today';
   const t = state.target;
   const title = state.targetBook.title;
-  if (t.type === 'plan') return `Plan a chapter of "${title}"`;
-  if (t.type === 'write') return `Write ${t.amount} words of "${title}"`;
-  return `Edit ${t.amount} chapter(s) of "${title}"`;
+  let text;
+  if (t.type === 'plan') text = `Plan a chapter of "${title}"`;
+  else if (t.type === 'write') text = `Write ${t.amount} words of "${title}"`;
+  else text = `Edit ${t.amount} chapter(s) of "${title}"`;
+  if (state.hard && !state.dayMet && state.tasks.length > 1) {
+    const left = state.tasks.filter(x => !x.met).length;
+    text += ` (${left} of ${state.tasks.length} left)`;
+  }
+  return text;
 }
 
 function refreshTray() {
   if (!tray || tray.isDestroyed()) return;
   const state = store.getState();
-  const done = state.target ? state.target.met : true;
+  const done = state.target ? state.dayMet : true;
   const summary = describeTargetShort(state);
   tray.setToolTip(`Write or Else — ${summary}`);
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -198,11 +204,18 @@ ipcMain.handle('book:rename', withTrayRefresh((e, { bookId, title }) => store.re
 ipcMain.handle('book:setPaused', withTrayRefresh((e, { bookId, paused }) => store.setPaused(bookId, paused)));
 ipcMain.handle('book:setTargetWords', (e, { bookId, words }) => store.setTargetWords(bookId, words));
 
+ipcMain.handle('idea:add', (e, { title, notes }) => store.addIdea(title, notes));
+ipcMain.handle('idea:update', (e, { ideaId, title, notes }) => store.updateIdea(ideaId, { title, notes }));
+ipcMain.handle('idea:delete', (e, ideaId) => store.deleteIdea(ideaId));
+ipcMain.handle('idea:promote', withTrayRefresh((e, ideaId) => store.promoteIdea(ideaId)));
+
 ipcMain.handle('log:add', withTrayRefresh((e, payload) => store.logProgress(payload)));
 ipcMain.handle('log:delete', withTrayRefresh((e, logId) => store.deleteLog(logId)));
 
 ipcMain.handle('day:toggleRest', withTrayRefresh(() => store.toggleRestDay()));
-ipcMain.handle('day:reroll', withTrayRefresh(() => store.rerollTarget()));
+ipcMain.handle('day:reroll', withTrayRefresh((e, index) => store.rerollTarget(index)));
+ipcMain.handle('day:setDifficulty', withTrayRefresh((e, mode) => store.setDifficulty(mode)));
+ipcMain.handle('day:rerollBonus', withTrayRefresh((e, index) => store.rerollBonus(index)));
 
 ipcMain.handle('reward:pickTomorrow', withTrayRefresh((e, bookId) => store.pickTomorrow(bookId)));
 

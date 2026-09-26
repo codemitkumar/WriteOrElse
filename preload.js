@@ -16,11 +16,18 @@ contextBridge.exposeInMainWorld('api', {
   setTargetWords: (bookId, words) => ipcRenderer.invoke('book:setTargetWords', { bookId, words }),
   deleteBook: (bookId) => ipcRenderer.invoke('book:delete', bookId),
 
+  addIdea: (title, notes) => ipcRenderer.invoke('idea:add', { title, notes }),
+  updateIdea: (ideaId, title, notes) => ipcRenderer.invoke('idea:update', { ideaId, title, notes }),
+  deleteIdea: (ideaId) => ipcRenderer.invoke('idea:delete', ideaId),
+  promoteIdea: (ideaId) => ipcRenderer.invoke('idea:promote', ideaId),
+
   logProgress: (payload) => ipcRenderer.invoke('log:add', payload),
   deleteLog: (logId) => ipcRenderer.invoke('log:delete', logId),
 
   toggleRestDay: () => ipcRenderer.invoke('day:toggleRest'),
-  rerollTarget: () => ipcRenderer.invoke('day:reroll'),
+  rerollTarget: (index) => ipcRenderer.invoke('day:reroll', index),
+  setDifficulty: (mode) => ipcRenderer.invoke('day:setDifficulty', mode),
+  rerollBonus: (index) => ipcRenderer.invoke('day:rerollBonus', index),
   pickTomorrow: (bookId) => ipcRenderer.invoke('reward:pickTomorrow', bookId),
 
   updateSettings: (partial) => ipcRenderer.invoke('settings:update', partial),

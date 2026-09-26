@@ -20,7 +20,9 @@ const DEFAULT_SETTINGS = {
   restDaysPerWeek: 1,  // guilt-free days off that don't break the streak
   rerollsPerDay: 1,    // how many times you can reroll an untouched daily target
   bonusTasksEnabled: true, // clear the day's target and consequence-free extra tasks keep coming
+  bonusEscalation: true,   // each round cleared in a day makes the next one a little bigger
   celebrations: true,  // confetti/banners on a cleared target; the OS reduced-motion setting still wins
+  hardModeTasks: 3,    // how many tasks a hard-mode day hands out (one per book, so it can be fewer)
   theme: 'dark',
   accent: 'ember'
 };
@@ -69,6 +71,9 @@ class Store {
         paused: false, targetWords: null, chaptersPlanned: 0, chaptersWritten: 0, blurb: '',
         autoPlanning: false
       }, b));
+      if (!Array.isArray(merged.ideas)) merged.ideas = [];
+      if (!merged.extraTasks) merged.extraTasks = {};
+      if (merged.difficulty !== 'hard') merged.difficulty = 'easy';
       if (!Array.isArray(merged.restDays)) merged.restDays = [];
       if (!merged.rerolls) merged.rerolls = { date: null, count: 0 };
       merged.rewards = Object.assign({ rerollsSpent: 0, picksSpent: 0, nextPick: null }, merged.rewards || {});
@@ -91,8 +96,18 @@ class Store {
     return {
       version: 2,
       books: [],
+      // Ideas live apart from books on purpose: nothing in here is ever eligible
+      // for a daily target. Promoting one turns it into a planning-stage book.
+      ideas: [],
       logs: [],
       dailyTargets: {},
+      // Hard mode: the rest of the day's list, after dailyTargets[date]. A date
+      // with an entry here (even an empty one) is a hard day, and only counts as
+      // met once every task on it is. Easy days never have one.
+      extraTasks: {},
+      // Kept out of settings on purpose: leaving hard mode has a condition on it,
+      // and the settings form saves everything at once without knowing that.
+      difficulty: 'easy',
       bonusTargets: {},
       activeDates: [],
       restDays: [],
@@ -133,7 +148,7 @@ class Store {
       this.data.punishState = { date: today, snoozeCount: 0, escalated: false, lastNagAt: null };
     }
     if (!this.data.dailyTargets[today]) {
-      this._generateTarget(today);
+      this._generateDay(today);
     } else {
       this._reconcileTodayTarget(today);
     }
@@ -148,11 +163,14 @@ class Store {
   // Earlier rounds in the chain are finished history and stay put.
   _reconcileBonus(date) {
     const chain = this._bonusChain(date);
-    const bonus = chain.length ? chain[chain.length - 1] : null;
-    if (!bonus || bonus.met) return;
-    if (this._isTargetStillValid(bonus)) return;
-    if (this._bonusLogged(date, bonus) > 0) return;
-    chain.pop();
+    const round = this._bonusRoundNo(date);
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const bonus = chain[i];
+      if (this._roundOf(bonus, i) !== round || bonus.met) continue;
+      if (this._isTargetStillValid(bonus)) continue;
+      if (this._bonusLogged(date, bonus) > 0) continue;
+      chain.splice(i, 1);
+    }
     if (chain.length === 0) delete this.data.bonusTargets[date];
   }
 
@@ -176,10 +194,141 @@ class Store {
 
   _reconcileTodayTarget(date) {
     const target = this.data.dailyTargets[date];
-    if (!target || target.met || this._isTargetStillValid(target)) return;
-    // The book behind it no longer matches — nothing logged against it going
-    // forward could ever complete it, so replace it outright, progress or not.
+    if (target && !target.met && !this._isTargetStillValid(target)) {
+      // The book behind it no longer matches — nothing logged against it going
+      // forward could ever complete it, so replace it outright, progress or not.
+      this._generateTarget(date);
+    }
+    // Same for the rest of a hard day's list. A task with nowhere left to go is
+    // dropped rather than left on the list where it could never be cleared.
+    const extras = this.data.extraTasks[date];
+    if (!extras) return;
+    for (let i = extras.length - 1; i >= 0; i--) {
+      const task = extras[i];
+      if (task.met || this._isTargetStillValid(task)) continue;
+      const next = this._rollTask(date, this._taskBookIds(date, task));
+      if (next) extras[i] = next;
+      else extras.splice(i, 1);
+    }
+  }
+
+  // ---- hard mode ----
+  // Easy days are one task. Hard days are a list — dailyTargets[date] first,
+  // extraTasks[date] after it — one task per book, and the day only counts once
+  // every one of them is cleared.
+
+  _isHardDay(date) {
+    return Array.isArray(this.data.extraTasks[date]);
+  }
+
+  _dayTasks(date) {
+    const target = this.data.dailyTargets[date];
+    if (!target) return [];
+    return [target, ...(this.data.extraTasks[date] || [])];
+  }
+
+  _dayMet(date) {
+    const tasks = this._dayTasks(date);
+    return tasks.length > 0 && tasks.every(t => t.met);
+  }
+
+  // A met day grows the word level if any of its tasks asked for words.
+  _dayHasWrite(date) {
+    return this._dayTasks(date).some(t => t.type === 'write');
+  }
+
+  _taskLogged(date, task) {
+    return this.data.logs
+      .filter(l => l.date === date && l.bookId === task.bookId && l.type === task.type)
+      .reduce((a, l) => a + l.amount, 0);
+  }
+
+  _hasProgressOnTask(date, task) {
+    return !!task && this.data.logs.some(l => l.date === date && l.bookId === task.bookId && l.type === task.type);
+  }
+
+  // Books already spoken for by the day's list, optionally leaving one task out
+  // (the one about to be replaced). Keeping every task on its own book is what
+  // lets a log count towards exactly one of them.
+  _taskBookIds(date, except = null) {
+    return new Set(this._dayTasks(date).filter(t => t !== except).map(t => t.bookId));
+  }
+
+  _rollTask(date, excludeIds) {
+    const pool = this._eligiblePool().filter(b => !excludeIds.has(b.id));
+    if (!pool.length) return null;
+    return this._buildTargetFor(this._weightedPick(pool));
+  }
+
+  _hardTaskCount() {
+    return Math.max(2, Math.min(5, parseInt(this.data.settings.hardModeTasks, 10) || 3));
+  }
+
+  _fillHardTasks(date) {
+    const extras = this.data.extraTasks[date] || (this.data.extraTasks[date] = []);
+    const want = this._hardTaskCount();
+    while (this._dayTasks(date).length < want) {
+      const task = this._rollTask(date, this._taskBookIds(date));
+      if (!task) break;
+      extras.push(task);
+    }
+  }
+
+  // A brand-new day, built for whichever mode is on.
+  _generateDay(date) {
+    delete this.data.extraTasks[date];
     this._generateTarget(date);
+    if (this.data.difficulty === 'hard' && this.data.dailyTargets[date]) this._fillHardTasks(date);
+  }
+
+  // The task the app is waiting on right now: the first one not yet cleared,
+  // or the first of the day once they all are.
+  _focusIndex(date) {
+    const tasks = this._dayTasks(date);
+    const i = tasks.findIndex(t => !t.met);
+    return i === -1 ? 0 : i;
+  }
+
+  _replaceTask(date, index, task) {
+    if (index === 0) this.data.dailyTargets[date] = task;
+    else this.data.extraTasks[date][index - 1] = task;
+  }
+
+  // Easy to hard is always allowed. It takes today over straight away unless the
+  // day is already won (or a rest day) — adding work to a day you've finished
+  // would take back a streak you'd already earned. Hard to easy waits until the
+  // whole of today's list is done, so it can't be used to walk away from it.
+  setDifficulty(mode) {
+    this._ensureToday();
+    const today = todayStr();
+    if (mode !== 'hard' && mode !== 'easy') return { ok: false, message: 'Unknown mode.', state: this.getState() };
+    if (mode === this.data.difficulty) return { ok: true, message: `Already on ${mode} mode.`, state: this.getState() };
+
+    if (mode === 'easy') {
+      if (this._isHardDay(today) && !this._dayMet(today)) {
+        const left = this._dayTasks(today).filter(t => !t.met).length;
+        return {
+          ok: false,
+          message: `Finish today's list first: ${left} task${left === 1 ? '' : 's'} left. Then you can go back to easy.`,
+          state: this.getState()
+        };
+      }
+      this.data.difficulty = 'easy';
+      this.save();
+      return { ok: true, message: 'Easy mode from tomorrow: one task a day.', state: this.getState() };
+    }
+
+    this.data.difficulty = 'hard';
+    let message = "Hard mode from tomorrow. Today's already settled.";
+    if (this.data.dailyTargets[today] && !this._dayMet(today) && !this.isRestDay(today)) {
+      this._fillHardTasks(today);
+      const n = this._dayTasks(today).length;
+      message = n > 1
+        ? `Hard mode is on. Today is ${n} tasks now, and the streak needs all of them.`
+        : 'Hard mode is on. Only one book is in rotation, so today is still one task.';
+    }
+    this.save();
+    return { ok: true, message, state: this.getState() };
   }
 
   _rollStreakIfNeeded(today) {
@@ -194,10 +343,10 @@ class Store {
       const target = this.data.dailyTargets[d];
       if (this.data.restDays.includes(d)) {
         // A declared rest day neither builds nor breaks the streak.
-      } else if (target && target.met) {
+      } else if (target && this._dayMet(d)) {
         s.current += 1;
         s.longest = Math.max(s.longest, s.current);
-        if (target.type === 'write') this._growWordTarget();
+        if (this._dayHasWrite(d)) this._growWordTarget();
       } else if (target) {
         s.current = 0;
       }
@@ -288,10 +437,15 @@ class Store {
     return { bookId: book.id, type: 'edit', amount, met: false, metAt: null };
   }
 
+  // Replaces the first task of the day. On a hard day the books the rest of the
+  // list already uses are off limits, so two tasks never share one.
   _generateTarget(date) {
-    const pool = this._eligiblePool();
+    const extras = this.data.extraTasks[date] || [];
+    const taken = new Set(extras.map(t => t.bookId));
+    const pool = this._eligiblePool().filter(b => !taken.has(b.id));
     if (pool.length === 0) {
-      this.data.dailyTargets[date] = null;
+      // Nothing free to replace it with: the next task on the list moves up.
+      this.data.dailyTargets[date] = extras.length ? extras.shift() : null;
       return;
     }
     const picked = this._claimPickFor(date, pool);
@@ -317,9 +471,57 @@ class Store {
     return chain;
   }
 
-  _activeBonus(date) {
+  // A round is every entry in the chain sharing a round number. On an easy day
+  // that's one task; on a hard day a round is a list, the same way the day is,
+  // and the next round only comes out once every task on it is cleared. Each
+  // task still counts on its own towards what bonus rounds pay, so a hard
+  // round of three earns what three easy rounds would.
+  _roundOf(bonus, index) {
+    return bonus.round || index + 1;
+  }
+
+  _bonusRoundNo(date) {
     const chain = this._bonusChain(date);
-    return chain.length ? chain[chain.length - 1] : null;
+    return chain.reduce((m, b, i) => Math.max(m, this._roundOf(b, i)), 0);
+  }
+
+  // Chain indexes of the round currently on offer.
+  _activeRoundIdx(date) {
+    const chain = this._bonusChain(date);
+    const round = this._bonusRoundNo(date);
+    return chain.map((b, i) => i).filter(i => this._roundOf(chain[i], i) === round);
+  }
+
+  _activeRoundMet(date) {
+    const chain = this._bonusChain(date);
+    const idx = this._activeRoundIdx(date);
+    return idx.length > 0 && idx.every(i => chain[i].met);
+  }
+
+  // Rounds fully cleared today — what the dashboard celebrates, as opposed to
+  // tasks cleared, which is what gets paid.
+  bonusRoundsCleared(date = todayStr()) {
+    const chain = this._bonusChain(date);
+    const byRound = new Map();
+    chain.forEach((b, i) => {
+      const r = this._roundOf(b, i);
+      byRound.set(r, (byRound.get(r) !== false) && !!b.met);
+    });
+    return [...byRound.values()].filter(Boolean).length;
+  }
+
+  // The bonus task the app is waiting on: the first open one in the round on
+  // offer, or the last one there is once that round is cleared.
+  _activeBonusIndex(date) {
+    const chain = this._bonusChain(date);
+    if (!chain.length) return -1;
+    const open = this._activeRoundIdx(date).find(i => !chain[i].met);
+    return open === undefined ? chain.length - 1 : open;
+  }
+
+  _activeBonus(date) {
+    const i = this._activeBonusIndex(date);
+    return i === -1 ? null : this._bonusChain(date)[i];
   }
 
   // Work logged against one round, ignoring whatever the main target (or an
@@ -337,18 +539,36 @@ class Store {
     if (this.isRestDay(date)) return;
 
     const chain = this._bonusChain(date);
-    const active = chain.length ? chain[chain.length - 1] : null;
     // Only ever one open round at a time — the next is minted on completion.
-    if (active && !active.met) return;
+    if (chain.length && !this._activeRoundMet(date)) return;
 
     const target = this.data.dailyTargets[date];
-    if (!target || !target.met) return;
+    if (!target || !this._dayMet(date)) return;
 
-    const pool = this._eligiblePool();
-    if (pool.length === 0) return;
-    // Prefer a different book than the one the last task used.
-    const lastBookId = active ? active.bookId : target.bookId;
-    const others = pool.filter(b => b.id !== lastBookId);
+    // Prefer different books than the last round (or the day's list) used.
+    const prev = chain.length
+      ? this._activeRoundIdx(date).map(i => chain[i])
+      : this._dayTasks(date);
+    const avoid = new Set(prev.map(b => b.bookId));
+    const round = this._bonusRoundNo(date) + 1;
+    const size = this._isHardDay(date) ? this._hardTaskCount() : 1;
+    const taken = new Set();
+    for (let n = 0; n < size; n++) {
+      const bonus = this._rollBonus(date, avoid, round, taken);
+      if (!bonus) break;
+      taken.add(bonus.bookId);
+      chain.push(bonus);
+    }
+    if (chain.length) this.data.bonusTargets[date] = chain;
+  }
+
+  // `avoid` is a preference (fall back to it rather than hand out nothing);
+  // `taken` is a rule: books already on this round, which never get a second task.
+  _rollBonus(date, avoid, round, taken = new Set()) {
+    const avoidIds = avoid instanceof Set ? avoid : new Set([avoid]);
+    const pool = this._eligiblePool().filter(b => !taken.has(b.id));
+    if (pool.length === 0) return null;
+    const others = pool.filter(b => !avoidIds.has(b.id));
     const bonus = this._buildTargetFor(this._weightedPick(others.length ? others : pool));
 
     // Anything already logged against this book+type today belongs to the main
@@ -356,9 +576,68 @@ class Store {
     bonus.baseline = this.data.logs
       .filter(l => l.date === date && l.bookId === bonus.bookId && l.type === bonus.type)
       .reduce((a, l) => a + l.amount, 0);
-    bonus.round = chain.length + 1;
-    chain.push(bonus);
-    this.data.bonusTargets[date] = chain;
+    bonus.round = round;
+    if (this.data.settings.bonusEscalation) this._escalateBonus(bonus, round);
+    return bonus;
+  }
+
+  // Every round cleared today makes the next one bigger: +25% words a round, up
+  // to double, and an extra chapter to edit every second round. Planning stays
+  // at one outline — two at once isn't a harder version of the same job.
+  // Keyed off the round number, so rerolling a round can't reset it to easy.
+  _escalateBonus(bonus, round) {
+    const step = round - 1;
+    if (step <= 0) return;
+    if (bonus.type === 'write') {
+      const base = bonus.amount;
+      const grown = Math.round((base * (1 + 0.25 * step)) / 50) * 50;
+      bonus.amount = Math.min(base * 2, Math.max(base, grown));
+    } else if (bonus.type === 'edit') {
+      const book = this.data.books.find(b => b.id === bonus.bookId);
+      const remaining = Math.max(1, ((book && book.totalChapters) || 1) - ((book && book.chaptersEdited) || 0));
+      const cap = Math.max(bonus.amount, Math.min(this.data.settings.maxChapters, remaining));
+      bonus.amount = Math.min(cap, bonus.amount + Math.floor(step / 2));
+    }
+  }
+
+  // Same rules as rerolling the daily target: only an untouched round, and it
+  // draws from the same purse — today's free reroll first, then the bank.
+  // Any open, untouched task in the round on offer. `index` is its place in
+  // the chain; it defaults to the one the day is waiting on.
+  canRerollBonus(index = this._activeBonusIndex(todayStr())) {
+    const today = todayStr();
+    const chain = this._bonusChain(today);
+    const bonus = chain[index];
+    if (!bonus || bonus.met) return false;
+    if (!this._activeRoundIdx(today).includes(index)) return false;
+    if (this.rerollsLeft() <= 0) return false;
+    return this._bonusLogged(today, bonus) <= 0;
+  }
+
+  rerollBonus(index) {
+    const today = todayStr();
+    this._ensureToday();
+    if (!Number.isInteger(index)) index = this._activeBonusIndex(today);
+    if (!this.canRerollBonus(index)) {
+      return { ok: false, message: 'Nothing to reroll — either you already started this round, or you are out of rerolls.', state: this.getState() };
+    }
+    const chain = this._bonusChain(today);
+    const old = chain[index];
+    const taken = new Set(this._activeRoundIdx(today).filter(i => i !== index).map(i => chain[i].bookId));
+    const bonus = this._rollBonus(today, old.bookId, this._roundOf(old, index), taken);
+    if (!bonus) {
+      return { ok: false, message: 'No other books to roll a bonus round from.', state: this.getState() };
+    }
+    const banked = this._spendReroll();
+    chain[index] = bonus;
+    this.save();
+    return {
+      ok: true,
+      index,
+      banked,
+      message: banked ? 'Banked reroll spent on a new bonus round.' : 'New bonus round rolled.',
+      state: this.getState()
+    };
   }
 
   _recomputeBonusMet(date) {
@@ -381,11 +660,14 @@ class Store {
         bonus.metAt = null;
       }
     }
-    while (chain.length > 1) {
-      const last = chain[chain.length - 1];
-      const prev = chain[chain.length - 2];
-      if (prev.met || last.met || this._bonusLogged(date, last) > 0) break;
-      chain.pop();
+    for (;;) {
+      const round = this._bonusRoundNo(date);
+      if (round <= 1) break;
+      const last = chain.filter((b, i) => this._roundOf(b, i) === round);
+      const prev = chain.filter((b, i) => this._roundOf(b, i) === round - 1);
+      if (prev.length && prev.every(b => b.met)) break;
+      if (last.some(b => b.met || this._bonusLogged(date, b) > 0)) break;
+      for (let i = chain.length - 1; i >= 0; i--) if (last.includes(chain[i])) chain.splice(i, 1);
     }
     if (chain.length === 0) delete this.data.bonusTargets[date];
   }
@@ -462,7 +744,7 @@ class Store {
     this.data.rewards.picksSpent = (this.data.rewards.picksSpent || 0) + 1;
     this.data.rewards.nextPick = { date: tomorrow, bookId };
     // A target generated ahead of time would ignore the pick, so throw it away.
-    if (this.data.dailyTargets[tomorrow]) this._generateTarget(tomorrow);
+    if (this.data.dailyTargets[tomorrow]) this._generateDay(tomorrow);
     this.save();
     return { ok: true, message: `Tomorrow is "${book.title}". Locked in.`, state: this.getState() };
   }
@@ -522,17 +804,17 @@ class Store {
   }
 
   _hasProgressOnTarget(date) {
-    const target = this.data.dailyTargets[date];
-    if (!target) return false;
-    return this.data.logs.some(l => l.date === date && l.bookId === target.bookId && l.type === target.type);
+    return this._hasProgressOnTask(date, this.data.dailyTargets[date]);
   }
 
-  canReroll() {
+  // Any task on the list can be rerolled while it's untouched, from the same
+  // purse as always. Defaults to the task the day is waiting on.
+  canReroll(index = this._focusIndex(todayStr())) {
     const today = todayStr();
-    const target = this.data.dailyTargets[today];
-    if (!target || target.met) return false;
+    const task = this._dayTasks(today)[index];
+    if (!task || task.met) return false;
     if (this.rerollsLeft() <= 0) return false;
-    return !this._hasProgressOnTarget(today);
+    return !this._hasProgressOnTask(today, task);
   }
 
   // The day's free reroll goes first; a banked one is only touched once that's
@@ -550,17 +832,24 @@ class Store {
     return banked;
   }
 
-  rerollTarget() {
+  rerollTarget(index) {
     const today = todayStr();
     this._ensureToday();
-    if (!this.canReroll()) {
+    if (!Number.isInteger(index)) index = this._focusIndex(today);
+    if (!this.canReroll(index)) {
       return { ok: false, message: 'Nothing to reroll — either you already started, or you are out of rerolls.', state: this.getState() };
     }
     const banked = this._spendReroll();
-    this._generateTarget(today);
+    if (index === 0) {
+      this._generateTarget(today);
+    } else {
+      const old = this._dayTasks(today)[index];
+      this._replaceTask(today, index, this._rollTask(today, this._taskBookIds(today, old)) || old);
+    }
     this.save();
     return {
       ok: true,
+      index,
       banked,
       message: banked ? 'Banked reroll spent. No takebacks.' : 'New target rolled. No takebacks.',
       state: this.getState()
@@ -619,7 +908,7 @@ class Store {
       const active = this.data.activeDates.includes(date);
       let status;
       if (rest) status = 'rest';
-      else if (target && target.met) status = 'met';
+      else if (target && this._dayMet(date)) status = 'met';
       else if (date === today) status = target ? 'pending' : 'none';
       else if (target && active) status = 'missed';
       else status = 'none';
@@ -629,7 +918,10 @@ class Store {
         chapters: bucket.chapters,
         plans: bucket.plans,
         logCount: bucket.count,
-        target: target ? { type: target.type, amount: target.amount, met: target.met } : null
+        target: target ? { type: target.type, amount: target.amount, met: target.met } : null,
+        tasks: this._dayTasks(date).length,
+        tasksMet: this._dayTasks(date).filter(t => t.met).length,
+        hard: this._isHardDay(date)
       });
     }
     return out;
@@ -650,7 +942,8 @@ class Store {
     let bestDay = { date: null, count: 0 };
     for (const [date, chain] of Object.entries(this.data.bonusTargets)) {
       if (!Array.isArray(chain) || !chain.length) continue;
-      const open = chain[chain.length - 1].met ? 0 : 1;
+      const round = chain.reduce((m, b, i) => Math.max(m, this._roundOf(b, i)), 0);
+      const open = chain.filter((b, i) => !b.met && this._roundOf(b, i) === round).length;
       // A round still on offer today hasn't been turned down yet, so it doesn't
       // count against the clear rate until the day is over.
       offered += date === today ? chain.length - open : chain.length;
@@ -767,20 +1060,41 @@ class Store {
   getState() {
     const today = todayStr();
     this._ensureToday();
-    const target = this.data.dailyTargets[today] || null;
+    const tasks = this._dayTasks(today);
+    const focus = this._focusIndex(today);
+    // `target` is whichever task is up next, so everything that shows "the"
+    // task (the hero card, the tray, the nag) walks down a hard day's list.
+    const target = tasks[focus] || null;
     const targetBook = target ? this.data.books.find(b => b.id === target.bookId) : null;
     const bonusChain = this._bonusChain(today);
     const bonus = bonusChain.length ? bonusChain[bonusChain.length - 1] : null;
     return {
       today,
       books: this.data.books,
+      ideas: this.data.ideas,
       target,
       targetBook,
+      difficulty: this.data.difficulty,
+      hard: this._isHardDay(today),
+      tasks: tasks.map((t, i) => Object.assign({}, t, {
+        index: i,
+        done: this._taskLogged(today, t),
+        canReroll: this.canReroll(i)
+      })),
+      focusIndex: focus,
+      dayMet: this._dayMet(today),
       bonus,
       bonusBook: bonus ? this.data.books.find(b => b.id === bonus.bookId) : null,
       bonusDone: bonus ? this.bonusProgress(today) : 0,
-      bonusRound: bonus ? bonusChain.length : 0,
+      bonusRound: bonus ? this._bonusRoundNo(today) : 0,
       bonusCleared: bonusChain.filter(b => b.met).length,
+      bonusRoundsCleared: this.bonusRoundsCleared(today),
+      bonusIndex: this._activeBonusIndex(today),
+      bonusTasks: this._activeRoundIdx(today).map(i => Object.assign({}, bonusChain[i], {
+        index: i,
+        done: Math.max(0, this._bonusLogged(today, bonusChain[i])),
+        canReroll: this.canRerollBonus(i)
+      })),
       activeEditingBookId: this.data.activeEditingBookId,
       wordTarget: { current: this._getCurrentWordTarget(), cap: this.data.settings.wordCap, start: this.data.settings.startWords },
       streak: this.data.streak,
@@ -791,17 +1105,18 @@ class Store {
       isRestDay: this.isRestDay(today),
       restDaysLeft: this.restDaysLeft(),
       canReroll: this.canReroll(),
+      canRerollBonus: this.canRerollBonus(),
       rerollsLeft: this.rerollsLeft(),
       rewards: this.rewardState(),
       stats: this.getStats()
     };
   }
 
-  addBook(title) {
+  addBook(title, { stage = 'writing', blurb = '' } = {}) {
     const book = {
       id: uid(),
       title: title.trim(),
-      stage: 'writing',
+      stage,
       wordsWritten: 0,
       totalChapters: null,
       targetWords: null,
@@ -810,7 +1125,7 @@ class Store {
       chaptersWritten: 0,
       lastWorkedAt: null,
       coverPath: null,
-      blurb: '',
+      blurb,
       paused: false,
       autoPlanning: false,
       createdAt: new Date().toISOString()
@@ -829,7 +1144,7 @@ class Store {
     const today = todayStr();
     const target = this.data.dailyTargets[today];
     if (!target) {
-      this._generateTarget(today);
+      this._generateDay(today);
       return;
     }
     if (target.met) return;
@@ -978,9 +1293,13 @@ class Store {
   // So it costs a reroll, the same as swapping the target by hand. Only a live
   // word target counts — a met one is history, and a plan target survives the
   // move on its own.
+  // Which task on today's list (if any) is an open word count on this book.
+  _openWriteTaskIndex(bookId) {
+    return this._dayTasks(todayStr()).findIndex(t => !t.met && t.type === 'write' && t.bookId === bookId);
+  }
+
   planningCostsReroll(bookId) {
-    const target = this.data.dailyTargets[todayStr()];
-    return !!(target && !target.met && target.type === 'write' && target.bookId === bookId);
+    return this._openWriteTaskIndex(bookId) !== -1;
   }
 
   needsPlanning(bookId) {
@@ -990,21 +1309,31 @@ class Store {
       return { ok: false, message: "That book isn't in the writing stage.", state: this.getState() };
     }
     const today = todayStr();
-    const costs = this.planningCostsReroll(bookId);
+    const taskIndex = this._openWriteTaskIndex(bookId);
+    const costs = taskIndex !== -1;
     const paid = costs && this.rerollsLeft() > 0;
 
     b.stage = 'planning';
     b.autoPlanning = false;
 
     let banked = false;
+    let replaced = null;
     if (paid) {
       banked = this._spendReroll();
-      this._generateTarget(today);
+      if (taskIndex === 0) {
+        this._generateTarget(today);
+        replaced = 0;
+      } else {
+        const old = this._dayTasks(today)[taskIndex];
+        const next = this._rollTask(today, this._taskBookIds(today, old));
+        if (next) { this._replaceTask(today, taskIndex, next); replaced = taskIndex; }
+        else this.data.extraTasks[today].splice(taskIndex - 1, 1);
+      }
     } else if (costs) {
       // Nothing left to pay with. The book moves either way — you shouldn't be
       // stuck writing into a book you know needs planning — but the day keeps
       // asking for its words.
-      this.data.dailyTargets[today].stagePinned = true;
+      this._dayTasks(today)[taskIndex].stagePinned = true;
     }
 
     this.save();
@@ -1013,7 +1342,7 @@ class Store {
       ? 'Moved to planning. A banked reroll paid for a new mission.'
       : "Moved to planning. Today's reroll paid for a new mission.";
     else if (costs) message = "Moved to planning — but with no rerolls left, today's words still stand.";
-    return { ok: true, spentReroll: paid, banked, targetChanged: paid, message, state: this.getState() };
+    return { ok: true, spentReroll: paid, banked, targetChanged: replaced !== null, index: replaced, message, state: this.getState() };
   }
 
   cancelPlanning(bookId) {
@@ -1084,6 +1413,46 @@ class Store {
     this._ensureActiveEditingBook();
     this.save();
     return this.getState();
+  }
+
+  addIdea(title, notes) {
+    const clean = (title || '').trim();
+    if (!clean) return this.getState();
+    this.data.ideas.push({
+      id: uid(),
+      title: clean.slice(0, 160),
+      notes: (notes || '').slice(0, 2000),
+      createdAt: new Date().toISOString()
+    });
+    this.save();
+    return this.getState();
+  }
+
+  updateIdea(ideaId, { title, notes }) {
+    const idea = this.data.ideas.find(x => x.id === ideaId);
+    if (!idea) return this.getState();
+    const clean = (title || '').trim();
+    if (clean) idea.title = clean.slice(0, 160);
+    if (typeof notes === 'string') idea.notes = notes.slice(0, 2000);
+    this.save();
+    return this.getState();
+  }
+
+  deleteIdea(ideaId) {
+    this.data.ideas = this.data.ideas.filter(x => x.id !== ideaId);
+    this.save();
+    return this.getState();
+  }
+
+  // An idea graduates straight into planning, not writing — it has no chapters
+  // yet, so the first thing it can ask of you is a plan. Its notes become the
+  // book's blurb so nothing jotted down gets lost on the way.
+  promoteIdea(ideaId) {
+    const idea = this.data.ideas.find(x => x.id === ideaId);
+    if (!idea) return { ok: false, state: this.getState() };
+    this.data.ideas = this.data.ideas.filter(x => x.id !== ideaId);
+    const book = this.addBook(idea.title, { stage: 'planning', blurb: idea.notes || '' });
+    return { ok: true, book, state: this.getState() };
   }
 
   deleteBook(bookId) {
@@ -1189,15 +1558,18 @@ class Store {
   }
 
   _unscoreIfNoLongerMet(date) {
-    const target = this.data.dailyTargets[date];
-    if (!target || !target.met) return;
-    const sum = this.data.logs
-      .filter(l => l.date === date && l.bookId === target.bookId && l.type === target.type)
-      .reduce((a, l) => a + l.amount, 0);
-    if (sum >= target.amount) return;
+    const wasMet = this._dayMet(date);
+    for (const task of this._dayTasks(date)) {
+      if (task.met && this._taskLogged(date, task) < task.amount) {
+        task.met = false;
+        task.metAt = null;
+      }
+    }
+    // One task falling back on a hard day unclears the day, same as the only
+    // task falling back on an easy one.
+    if (!wasMet || this._dayMet(date)) return;
+    const hadWrite = this._dayHasWrite(date);
 
-    target.met = false;
-    target.metAt = null;
     // The bonus was awarded for finishing this target early; if it turns out you
     // hadn't, take it back — unless you've already started it.
     if (!this._anyBonusProgress(date)) delete this.data.bonusTargets[date];
@@ -1208,62 +1580,63 @@ class Store {
       // _rollStreakIfNeeded replay (and re-count) the entire history.
       const earlier = this.data.activeDates.filter(d => d < date).sort();
       s.lastUpdatedDate = earlier.length ? earlier[earlier.length - 1] : null;
-      if (target.type === 'write') this._shrinkWordTarget();
+      if (hadWrite) this._shrinkWordTarget();
     }
   }
 
   // If a chapter wraps up before today's word target is used up, don't force the
   // writer to keep grinding the same book past a natural break — immediately hand
   // the leftover word count to a different random writing book.
+  // On a hard day the leftover only moves to a book the list isn't already
+  // using — handing it to one that is would quietly merge two tasks into one.
   _handOffRemainingTarget(date, justLoggedBookId) {
-    const target = this.data.dailyTargets[date];
-    if (!target || target.met || target.type !== 'write' || target.bookId !== justLoggedBookId) return;
+    const tasks = this._dayTasks(date);
+    const index = tasks.findIndex(t => !t.met && t.type === 'write' && t.bookId === justLoggedBookId);
+    if (index === -1) return;
+    const task = tasks[index];
 
-    const sum = this.data.logs
-      .filter(l => l.date === date && l.bookId === target.bookId && l.type === 'write')
-      .reduce((a, l) => a + l.amount, 0);
-    const remaining = target.amount - sum;
+    const remaining = task.amount - this._taskLogged(date, task);
     if (remaining <= 0) return;
 
-    const candidates = this.data.books.filter(b => b.stage === 'writing' && !b.paused && b.id !== justLoggedBookId);
+    const taken = this._taskBookIds(date);
+    const candidates = this.data.books.filter(b => b.stage === 'writing' && !b.paused && !taken.has(b.id));
     if (candidates.length === 0) return;
 
     const nextBook = this._weightedPick(candidates);
-    this.data.dailyTargets[date] = { bookId: nextBook.id, type: 'write', amount: remaining, met: false, metAt: null };
+    this._replaceTask(date, index, { bookId: nextBook.id, type: 'write', amount: remaining, met: false, metAt: null });
   }
 
   _recomputeTargetMet(date) {
-    const target = this.data.dailyTargets[date];
-    if (!target || target.met) return;
-    const sum = this.data.logs
-      .filter(l => l.date === date && l.bookId === target.bookId && l.type === target.type)
-      .reduce((a, l) => a + l.amount, 0);
-    if (sum >= target.amount) {
-      target.met = true;
-      target.metAt = new Date().toISOString();
-      if (date === todayStr()) this._scoreStreakForToday(target);
+    const wasMet = this._dayMet(date);
+    for (const task of this._dayTasks(date)) {
+      if (task.met) continue;
+      if (this._taskLogged(date, task) >= task.amount) {
+        task.met = true;
+        task.metAt = new Date().toISOString();
+      }
     }
+    // The streak moves when the day does — on a hard day, that's the last task.
+    if (!wasMet && this._dayMet(date) && date === todayStr()) this._scoreStreakForToday(date);
   }
 
   // Don't make the streak wait until tomorrow's rollover to reflect a target
   // you just hit — count it the moment it's met, so the number on screen is
   // never a day behind reality. _rollStreakIfNeeded still handles past days
   // (missed days, or catching up after being away).
-  _scoreStreakForToday(target) {
-    const today = todayStr();
+  _scoreStreakForToday(date) {
     const s = this.data.streak;
-    if (s.lastUpdatedDate === today) return;
+    if (s.lastUpdatedDate === date) return;
     s.current += 1;
     s.longest = Math.max(s.longest, s.current);
-    s.lastUpdatedDate = today;
-    if (target.type === 'write') this._growWordTarget();
+    s.lastUpdatedDate = date;
+    if (this._dayHasWrite(date)) this._growWordTarget();
   }
 
   isTargetMetToday() {
     const today = todayStr();
     if (this.isRestDay(today)) return true; // a declared day off is nothing to punish
     const t = this.data.dailyTargets[today];
-    return !t || t.met; // no target (e.g. no books) counts as nothing to punish for
+    return !t || this._dayMet(today); // no target (e.g. no books) counts as nothing to punish for
   }
 
   updateSettings(partial) {

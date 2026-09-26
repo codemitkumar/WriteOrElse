@@ -46,7 +46,11 @@ function showNag(store, onFocusMain) {
   const target = state.target;
   if (!target) return;
   const bookTitle = state.targetBook ? state.targetBook.title : 'your book';
-  const desc = describeTarget(target, bookTitle);
+  let desc = describeTarget(target, bookTitle);
+  if (state.hard && state.tasks.length > 1) {
+    const left = state.tasks.filter(t => !t.met).length;
+    desc += ` — ${left} of ${state.tasks.length} tasks left`;
+  }
 
   const disp = screen.getPrimaryDisplay().workAreaSize;
   nagWin = new BrowserWindow({
